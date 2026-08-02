@@ -20,9 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version comes from the `packageManager` field in package.json — the same
+      # source corepack and the devcontainer use. Pinning it here too would be a
+      # second source of truth, free to drift.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10.23.0
 
       - uses: actions/setup-node@v4
         with:
@@ -50,9 +51,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Version comes from the `packageManager` field in package.json — the same
+      # source corepack and the devcontainer use. Pinning it here too would be a
+      # second source of truth, free to drift.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10.23.0
 
       - uses: actions/setup-node@v4
         with:

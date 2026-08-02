@@ -7,7 +7,9 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
-  "postCreateCommand": "corepack enable && corepack prepare pnpm@10.23.0 --activate && pnpm install --frozen-lockfile",
+  // corepack reads the pnpm version from the `packageManager` field in package.json,
+  // so it is not repeated here. One source of truth, shared with CI.
+  "postCreateCommand": "corepack enable && pnpm install --frozen-lockfile",
 
   // Codespaces serves forwarded ports over HTTPS, which makes the page a secure
   // context — the precondition for getUserMedia. This is what lets the microphone
