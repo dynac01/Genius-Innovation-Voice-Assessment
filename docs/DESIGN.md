@@ -2,6 +2,7 @@
 
 **Status:** design in progress
 **Last updated:** 2026-08-02
+**Companion docs:** [WORKPLAN.md](WORKPLAN.md) · [TESTING.md](TESTING.md)
 **Source:** `assessment-voice-conversation.pdf` (Take-Home Full-Stack Assessment — Voice Conversation)
 
 ---

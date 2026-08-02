@@ -1,0 +1,10 @@
+{
+  // Root-level TypeScript that belongs to no package: tool configs and the e2e
+  // suite. Without this they would be linted but never typechecked.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["vitest.config.ts", "playwright.config.ts", "tests/**/*.ts"]
+}

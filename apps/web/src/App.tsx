@@ -28,10 +28,16 @@ export function App() {
         here means a Codespace or mobile browser that cannot support the audio path
         says so immediately, rather than failing opaquely once capture starts.
       */}
-      <ul style={{ paddingLeft: '1.1rem' }}>
-        <li>Secure context (HTTPS or localhost): {secureContext ? 'yes' : 'no'}</li>
-        <li>getUserMedia available: {hasMediaDevices ? 'yes' : 'no'}</li>
-        <li>AudioWorklet available: {hasAudioWorklet ? 'yes' : 'no'}</li>
+      <ul style={{ paddingLeft: '1.1rem' }} data-testid="capabilities">
+        <li data-testid="cap-secure-context" data-ok={secureContext}>
+          Secure context (HTTPS or localhost): {secureContext ? 'yes' : 'no'}
+        </li>
+        <li data-testid="cap-get-user-media" data-ok={hasMediaDevices}>
+          getUserMedia available: {hasMediaDevices ? 'yes' : 'no'}
+        </li>
+        <li data-testid="cap-audio-worklet" data-ok={hasAudioWorklet}>
+          AudioWorklet available: {hasAudioWorklet ? 'yes' : 'no'}
+        </li>
       </ul>
     </main>
   );
