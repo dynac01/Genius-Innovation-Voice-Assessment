@@ -1,0 +1,19 @@
+{
+  "name": "@voice/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Transport and session host for the voice loop. Owns the WebSocket, not the logic.",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@voice/core": "workspace:*",
+    "@voice/providers": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}

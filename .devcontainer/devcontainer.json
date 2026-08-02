@@ -1,0 +1,37 @@
+{
+  "$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json",
+  "name": "Voice Conversation",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
+
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "postCreateCommand": "corepack enable && corepack prepare pnpm@10.23.0 --activate && pnpm install --frozen-lockfile",
+
+  // Codespaces serves forwarded ports over HTTPS, which makes the page a secure
+  // context — the precondition for getUserMedia. This is what lets the microphone
+  // work in a Codespace, and why the demo is genuinely developable there.
+  "forwardPorts": [5173, 8787],
+  "portsAttributes": {
+    "5173": {
+      "label": "web (Vite)",
+      "onAutoForward": "openPreview"
+    },
+    "8787": {
+      "label": "server (HTTP + WebSocket)",
+      "onAutoForward": "silent"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode", "vitest.explorer"],
+      "settings": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "typescript.tsdk": "node_modules/typescript/lib"
+      }
+    }
+  }
+}
