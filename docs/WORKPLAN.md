@@ -404,10 +404,9 @@ deployed URL.
 
 ---
 
-## Phase 10 — Documentation and demo
+## Phase 10 — Documentation
 
-**Goal:** the parts that are actually graded but easy to leave until there's no time left.
-Do not compress this.
+**Goal:** the parts that are graded but easy to leave until there is no time left.
 
 - [ ] **README:**
   - [ ] Architecture overview with the loop/pipeline/dialog boundaries drawn
@@ -417,17 +416,30 @@ Do not compress this.
   - [ ] **Stated latency targets and the measured numbers we hit** *(explicitly required)*
   - [ ] Resume / pause / cancel semantics table
   - [ ] Tradeoffs weighed, and what would change with more time
-- [ ] Rehearse the demo — know which barge-in moments to hit
-- [ ] **Record part 1 — the working system:** natural back-and-forth, cutting the assistant off
-      mid-sentence and it stopping instantly, resuming an interrupted reply, earcons signalling
-      state, and the pipeline component swap
-- [ ] **Record part 2 — architectural walkthrough:** audio streaming design, barge-in mechanism
-      and its latency, endpointing and turn-taking, the pluggable pipeline and dialog protocol,
-      key tradeoffs, and what would change with more time
-- [ ] Total 15–30 minutes. *"We want to hear your reasoning, not just see the result."*
+- [ ] Demo runbook — what to show, in what order, and which moment demonstrates which criterion
+- [ ] Architecture talking points for the walkthrough, drawn from [DESIGN.md](DESIGN.md)
 - [ ] Final pass over the deliverables checklist in [DESIGN.md §7](DESIGN.md#7-deliverables-checklist)
 
-**Done when:** all three deliverables are submitted.
+**Done when:** the repository is submittable and the demo has everything it needs except a camera.
+
+---
+
+## Not my work
+
+This plan tracks building the system. Three things the brief requires are **not** buildable from
+here, and listing them as phases was a mis-scope — they were quietly treated as tasks with an
+owner when they never had one.
+
+| Deliverable | Why it needs a person | What I can contribute |
+|---|---|---|
+| **The recorded demo** — both parts | It is a person on camera explaining their own reasoning to an evaluator. That is the deliverable, not a proxy for it. | A runbook and the architecture talking points (Phase 10) |
+| **Deploy to a host** | Needs an account and credentials I do not hold | `Dockerfile`, `fly.toml`, and a CI job proving the container boots |
+| **Real-device and Codespaces verification** | A physical phone; a Codespace launched from a browser | Every precondition surfaced in the UI; a devcontainer; layout tests at phone size |
+
+The distinction that matters for the demo specifically: everything else on this list is a task I
+*cannot execute*. The recording is a task that was never mine. What I can do is make sure that
+when the camera starts, nothing about the system is a surprise — which is what the runbook and
+talking points are for.
 
 ---
 
@@ -440,10 +452,11 @@ Do not compress this.
 | 3 | 4 | Barge-in. Give this a full day — it is weighted first and evaluated hardest. |
 | 4 | 5, 6 | Resume semantics + stub dialog, then earcons. |
 | 5 | 7, 8 | Real providers and the swap; robustness and awkward cases. |
-| 6 | 9, 10 | Mobile, deploy, README, demo recording. |
+| 6 | 9, 10 | Mobile, deploy, README. Demo recording is yours — see *Not my work*. |
 
 **Slack:** none. If time is lost, the things to cut are the second TTS provider (Phase 7) and
-UI polish (Phase 9) — **not** barge-in tuning, the tests, or the demo recording.
+UI polish (Phase 9) — **not** barge-in tuning or the tests. The demo recording is not mine to
+cut or to schedule; leave time for it.
 
 ---
 
@@ -456,7 +469,7 @@ UI polish (Phase 9) — **not** barge-in tuning, the tests, or the demo recordin
 | Resume offset accounting is subtly wrong and shows on camera | 5 | Played-through accounting, not generation cursor; short jitter buffer; dedicated test |
 | Barge-in latency misses the stated target | 4 | Two-path detection — client kills audio locally, server only handles semantics |
 | Real providers slip or misbehave | 7 | Fakes are the default; everything works and demos without keys |
-| Demo recording gets compressed into the last hour | 10 | Full day allocated; rehearse before recording |
+| Demo recording gets compressed into the last hour | — | Not my work to schedule. Phase 10 delivers a runbook so the recording needs preparation, not discovery |
 
 ---
 
