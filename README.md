@@ -1,0 +1,327 @@
+# Voice Conversation
+
+A browser-based, hands-free voice assistant: start a session, talk, and it talks back — and **stops the instant you speak over it**.
+
+The deliverable is not the demo. It is a reusable real-time audio loop with a pluggable STT → LLM → TTS pipeline, sitting behind a fixed dialog protocol. The browser is one way to drive it.
+
+```bash
+pnpm install && pnpm dev
+```
+
+Then open **http://localhost:5173** and click *Start session*. No API keys, no accounts, no spend — the app runs end to end on fakes by default.
+
+---
+
+## Contents
+
+- [What you'll see](#what-youll-see) · [Architecture](#architecture) · [Latency](#latency-targets-and-what-we-hit)
+- [Providers and keys](#providers-and-keys) · [Interruption semantics](#interruption-semantics) · [Testing](#testing)
+- [Codespaces](#codespaces) · [Deployment](#deployment) · [Tradeoffs](#tradeoffs) · [With more time](#with-more-time)
+
+---
+
+## What you'll see
+
+Worth setting expectations, because it looks broken otherwise: **with no keys, the transcript is scripted.** Whatever you say, the fake STT emits the same words on a timer.
+
+Your microphone *is* genuinely captured, encoded, and streamed — watch `Frames sent` climb. Only the transcription result is canned. Set `STT_PROVIDER=deepgram` and it transcribes you for real.
+
+**The part worth actually trying:** wait ~3s for the assistant to start, then talk over it. It stops instantly, `Barge-ins` ticks, and `Barge-in stop` shows the measured milliseconds. That number is real — read off the audio clock, not estimated.
+
+---
+
+## Architecture
+
+```
+                        ┌──────────────────── browser ────────────────────┐
+                        │                                                 │
+   microphone ─▶ AudioWorklet ─▶ VAD ─┬─▶ WebSocket ─────────────┐        │
+                        │             │                          │        │
+                        │             └─▶ gain ramp → silence    │        │
+                        │                 (barge-in, ~70ms)      │        │
+                        │                                        │        │
+   speaker   ◀── jitter buffer ◀── PCM frames ◀──────────────┐   │        │
+                        │      ◀── earcons (own gain node)   │   │        │
+                        └────────────────────────────────────┼───┼────────┘
+                                                             │   │
+                        ┌──────────────────── server ────────┼───┼────────┐
+                        │                                    │   ▼        │
+                        │   AudioBridge ◀────────────────────┘  audio in  │
+                        │      │    ▲                                     │
+                        │      │    │  STT ─ endpointer                   │
+                        │      │    └───────────────── TTS ───────────────┤
+                        │      │                                          │
+                        │      ├── FromBridge ──▶ ┌────────┐              │
+                        │      │  utterance       │ Dialog │              │
+                        │      │  pause_detected  │  (stub)│──▶ LLM       │
+                        │      │  interrupt       └────────┘              │
+                        │      ◀── ToBridge ── say / earcon / barge_in    │
+                        └─────────────────────────────────────────────────┘
+```
+
+Three seams, and each is real rather than decorative:
+
+| Seam | Contract | Proof it holds |
+|---|---|---|
+| **Pipeline** | `STT` / `LLM` / `TTS` | Adding three real providers changed **zero lines** under `packages/core/` |
+| **Dialog** | `FromBridge` / `ToBridge` | The model lives behind the protocol; the bridge has no opinion about what to say |
+| **Purity** | `@voice/core` does no I/O | `"types": []` in tsconfig plus a lint rule banning `node:*` and provider SDKs — negative-tested |
+
+```
+packages/core        the loop, protocol, state machines, VAD, endpointer, chunker — no I/O
+packages/providers   fakes first, real providers alongside
+apps/server          transport and session host
+apps/web             the browser demo
+```
+
+**The bridge owns everything acoustic and no opinion about what to say.** That split is why a real decision engine can replace `StubDialog` without `bridge.ts` changing a line, and why every acoustic behaviour can be tested against a dialog that says exactly what a test needs.
+
+### The fixed contracts
+
+Reproduced exactly as the brief specifies them:
+
+```ts
+interface STT { transcribeStream(audio: AudioStream): AsyncIterable<{ text: string; final: boolean }>; }
+interface LLM { respond(messages: Message[]): AsyncIterable<{ text: string }>; }
+interface TTS { synthesizeStream(text: string): AsyncIterable<AudioChunk>; }
+
+type FromBridge =
+  | { type: "utterance"; text: string; t: number }
+  | { type: "pause_detected"; t: number }
+  | { type: "interrupt"; t: number };
+
+type ToBridge =
+  | { type: "say"; text: string }
+  | { type: "earcon"; sound: "listening" | "accepted" | "ready" | "failed" }
+  | { type: "barge_in"; behavior: "stop" | "pause" | "finish" };
+```
+
+One addition worth flagging: `AudioChunk` carries an optional `TextSpan`. The brief fixes the interface *signatures* and leaves `AudioChunk` open, and this is where resume gets won — see [Interruption semantics](#interruption-semantics).
+
+---
+
+## Latency: targets and what we hit
+
+| Measurement | Target | **Measured** | Method |
+|---|---|---|---|
+| **Barge-in stop** — user speech onset → assistant audio silent | **< 300 ms** | **70–78 ms** | `pnpm bench:latency`, real Chromium, both endpoints read from the audio clock |
+| **Response** — end of turn → first assistant audio *(real providers)* | **< 2000 ms** | **1228–2040 ms** | Server-side probe, warm connections |
+| Response *(fakes)* | — | ~550 ms | e2e |
+| Model time-to-first-token — Haiku 4.5, warm | — | 565–1332 ms | provider probe |
+| TTS time-to-first-byte — Aura-2, warm | — | 416–477 ms | provider probe |
+
+### Where the barge-in number comes from
+
+| Stage | ms | |
+|---|---|---|
+| VAD onset evidence | 50 | configured |
+| Frame period + dispatch | 8–16 | measured |
+| Gain ramp to zero | 12 | configured |
+| **Total** | **70–78** | **measured, four runs** |
+
+The 120 ms jitter buffer never appears in that budget — buffered audio is *discarded*, not played out, so it costs queue depth rather than stop latency.
+
+**Why it's this fast: the round trip is not in the path.** Detecting an interruption from STT partials would spend 200–500 ms before a stop command could even start travelling back. So the browser decides *that* you spoke and silences output locally; the server round trip only decides what it **meant**. Two paths, and only the slow one is allowed to be slow.
+
+The ramp is 12 ms rather than a hard cut because "no audio tail" also means no click — a hard cut at a non-zero sample is its own kind of tail.
+
+### Honest reading of the response number
+
+**1.2–2.0 s is at the edge of the 2 s target**, not comfortably inside it. It decomposes as roughly: model TTFT (0.6–1.3 s) + first speakable clause + TTS TTFB (0.4–0.5 s).
+
+Two things already buy latency there. The clause chunker breaks the **first** chunk early (a finished sentence is never a fragment, however short) so speech starts before the model has finished. And the model and synthesiser run concurrently — serialising them would add most of a second to every turn.
+
+One known, unfixed cost: **the first request of a process pays ~4 s of TLS and connection setup.** That hits the first turn of a cold server and nothing after. Pre-warming provider connections at session start is the obvious fix and is listed under [With more time](#with-more-time).
+
+### Endpointing and detection windows
+
+| Setting | Value | Why |
+|---|---|---|
+| End-of-turn silence | 700 ms | Above conversational hesitation (200–500 ms), below where a reply feels sluggish |
+| Pause reported | 300 ms | Told to the dialog as information; does **not** end the turn |
+| VAD onset | 50 ms | Biased to fire — a late stop is the failure everyone hears |
+| VAD release | 250 ms | Long enough to span the gaps between words |
+| Speech threshold | 9 dB over noise floor | |
+| Threshold while assistant audible | 16 dB | Echo guard — see [Tradeoffs](#tradeoffs) |
+
+**Endpointing and barge-in are opposite-biased detectors on the same microphone.** One wants ~50 ms of onset and errs toward firing; the other wants most of a second of silence and errs against it. They cannot share tuning, so they do not share code.
+
+---
+
+## Providers and keys
+
+Everything runs on fakes with **no keys at all**. Real providers are opt-in.
+
+```bash
+cp .env.example .env      # then fill in the keys you want
+```
+
+| Stage | Real | Fake (default) |
+|---|---|---|
+| STT | Deepgram Nova-3 (streaming) | `ScriptedStt` — programmed partials with controllable timing |
+| LLM | Claude Haiku 4.5 (streaming) | `CannedLlm` — known reply, token by token |
+| TTS | Deepgram Aura-2 (streaming) | `ToneTts` (audible) / `SilentTts` |
+
+```bash
+STT_PROVIDER=deepgram      # fake | deepgram
+LLM_PROVIDER=anthropic     # fake | anthropic
+TTS_PROVIDER=deepgram      # fake | fake-silent | deepgram
+
+DEEPGRAM_API_KEY=...       # one key covers STT and TTS
+ANTHROPIC_API_KEY=...
+ANTHROPIC_MODEL=claude-haiku-4-5
+```
+
+The server prints what it actually resolved, and `/health` reports the same — a silently-wrong pipeline is worse than a loud failure:
+
+```
+[server] pipeline  stt=deepgram  llm=anthropic  tts=deepgram
+```
+
+A missing key for a selected provider **fails at startup** rather than falling back to a fake and looking like a working demo.
+
+**Why Haiku 4.5:** a latency decision, not a cost one. In a voice loop, time-to-first-token *is* the product — you hear silence until the first clause reaches the synthesiser. Swap `ANTHROPIC_MODEL` for a larger Claude if replies feel thin; nothing else changes.
+
+**One mapping worth knowing.** Deepgram's `final` is wired to `speech_final`, not `is_final`. `is_final` means "this text is stable" — true repeatedly mid-sentence. `speech_final` means "the speaker stopped." Using the former would end the turn on the first stable clause and cut you off mid-thought.
+
+---
+
+## Interruption semantics
+
+When you interrupt, the browser silences output immediately. The round trip then decides what the interruption *meant* — and the fixed protocol turned out to describe the answer exactly:
+
+| You say | Intent | Protocol | Behaviour |
+|---|---|---|---|
+| "keep going", "go on", "carry on" | `resume` | `barge_in: finish` | Continues **from the last character you heard** |
+| "mhm", "yeah", "right", "got it" | `backchannel` | `barge_in: finish` | Same — acknowledgement is not an instruction |
+| "hold on", "wait", "one sec" | `pause` | `barge_in: pause` | Reply stays parked, silent |
+| "stop", "never mind", "that's enough" | `cancel` | `barge_in: stop` | Reply discarded |
+| anything substantive | `fresh` | `barge_in: stop` + `say` | Prior reply abandoned; the new utterance drives the next |
+
+**A control phrase counts only as the whole utterance.** "Keep going" resumes; *"keep going, but in Spanish"* is a new instruction that happens to start the same way. Mistaking an instruction for a control word silently drops your request; the reverse costs one redundant reply.
+
+### Resume is from what you *heard*
+
+The model runs ahead of the synthesiser, which runs ahead of the playhead. Those are **three different positions**, and resuming from the wrong one is the failure most implementations ship:
+
+```
+"It is sunny and mild in Lisbon today, around twenty two degrees. Enjoy it."
+ ├───────── heard ─────────┤├──── synthesised ────┤├──── generated ────┤
+                           ▲
+                    resume from here
+```
+
+So `AudioChunk` carries the character span it renders, and the bridge tracks the played-through offset. The test asserts the strong form — `reply.slice(0, from) + remaining === reply` with `from > 0`. Nothing repeated, nothing skipped, no restart.
+
+**Pausing stops the voice, not the thinking.** While parked, the dialog keeps generating and the bridge keeps accumulating text — it simply does not speak it. Resuming is therefore instant rather than paying generation latency twice.
+
+---
+
+## Testing
+
+Four tiers. Full rationale in [docs/TESTING.md](docs/TESTING.md).
+
+```bash
+pnpm test              # 290 tests — 247 unit, 43 feature. ~1s, no browser, no keys
+pnpm check             # + typecheck, lint, format. What CI runs
+
+pnpm test:e2e:install  # once — downloads Chromium
+pnpm test:e2e          # 8 tests in a real browser, incl. phone viewport
+
+pnpm bench:latency     # prints the barge-in number. Never gated in CI
+```
+
+| Tier | Runner | Answers |
+|---|---|---|
+| **Unit** | Vitest, colocated | Is this rule correct? |
+| **Feature** | Vitest, `tests/feature` | Does the loop behave? |
+| **E2E** | Playwright | Do the seams hold in a real browser? |
+| **Latency** | bespoke | How fast is it actually? |
+
+**Every control-flow test runs headless and keyless**, on a virtual clock. A test asserting "the assistant waits through a 400 ms mid-sentence pause" takes microseconds and cannot flake because a CI runner stalled.
+
+**The latency harness is deliberately not in CI.** It is a benchmark producing a number, not a pass/fail assertion; timing on a shared runner is noise, and a flaky gate gets switched off within a day, taking the real signal with it.
+
+### Criteria coverage
+
+| # | Criterion | |
+|---|---|---|
+| 1 | Barge-in stops immediately | tested + **70 ms measured** |
+| 2 | Resume an interrupted reply | tested |
+| 3 | Fresh turn after interruption | tested |
+| 4 | Endpointing | tested |
+| 5 | Streaming both ways | tested |
+| 6 | Earcons, non-clobbering | tested |
+| 7 | Pluggable swap | **zero core changes** verified |
+| 8 | Graceful awkward cases | tested |
+
+---
+
+## Codespaces
+
+Open the repo in a Codespace — the devcontainer installs everything, and forwarded ports are HTTPS, which makes the page a **secure context**. That matters: `getUserMedia` refuses to run outside one, so the microphone genuinely works in a Codespace.
+
+```bash
+pnpm dev
+```
+
+Then open the forwarded port for 5173.
+
+---
+
+## Deployment
+
+One container serving the built app **and** the WebSocket from a single origin. That is not tidiness: a second origin makes the socket cross-origin and puts the demo one CORS or cookie policy away from failing on exactly the mobile browsers it most needs to work on. It also means one certificate and one URL.
+
+```bash
+fly launch --no-deploy
+fly secrets set DEEPGRAM_API_KEY=... ANTHROPIC_API_KEY=... \
+                STT_PROVIDER=deepgram LLM_PROVIDER=anthropic TTS_PROVIDER=deepgram
+fly deploy
+```
+
+Nothing in the app is host-specific — it is one container listening on one port — so another host is a config change, not a code change. CI builds the image and smoke-tests that the container boots and serves the app.
+
+> **Not yet deployed.** The deploy needs an account this build does not have. `Dockerfile`, `fly.toml`, and a passing container CI job are in the repo; the URL is not.
+
+---
+
+## Tradeoffs
+
+**Barge-in is decided in the browser, not the server.** The alternative is one authority instead of two, but the latency budget forbids it — see [above](#where-the-barge-in-number-comes-from). The cost is that the browser can be wrong (echo), which is why the echo guard exists.
+
+**The echo guard raises the bar *and* freezes the noise floor while the assistant talks.** Freezing matters as much as the raised threshold: letting echo drag the floor upward would leave the detector numb for seconds *after* the assistant stops — exactly when you are most likely to speak. Untested on a real speakerphone; that is the largest open risk in the project.
+
+**120 ms jitter buffer.** Shorter means a crisper stop and more dropouts; longer, the reverse. This is the barge-in tax made explicit — nothing already handed to the hardware can be recalled.
+
+**Character spans are estimated where the provider does not report them.** Aura-2 gives no text↔audio mapping. Emitting nothing is the safe-looking choice and the worse one: the loop then resumes at whole-clause granularity, replaying words you already heard. So spans are estimated from a speaking rate and made *safe* rather than accurate — monotonic, clamped, and the final frame pinned exactly. A wrong rate costs precision mid-clause and nothing at its boundaries.
+
+**`tsx` in production rather than a bundled artefact.** Slower cold start, one fewer build step, and production runs the same code path as development. For a proof of concept that is the right side of the trade.
+
+**Idle budgets, not total budgets.** A long reply is not a stall. A wall-clock budget would kill healthy answers while still missing a provider trickling one byte a minute.
+
+**No second real TTS vendor.** Criterion 7 defines the swap as "once with a real provider and once with the silent fake" — real ↔ fake. `SilentTts` already exists and is tested; a second paid vendor adds nothing.
+
+---
+
+## With more time
+
+Roughly in order of what I would do next:
+
+1. **Pre-warm provider connections at session start.** The ~4 s first-request TLS cost lands on the first turn of every cold server. It is the single largest latency win available and is not hard.
+2. **Verify and tune the echo guard on a real speakerphone.** The largest untested assumption in the highest-weighted criterion. If `duckedThresholdDb` is wrong, the assistant interrupts itself — which reads as barge-in working *too* well and is maddening to diagnose.
+3. **Adaptive endpointing.** 700 ms is a fixed compromise. Using the STT's own acoustic signals — Deepgram already sends `UtteranceEnd` and VAD events we currently ignore — would let it end faster after a clear stop and wait longer after a trailing conjunction.
+4. **Resume across a re-synthesis boundary.** Resume re-synthesises the remaining text, so the voice restarts mid-clause with a fresh prosodic contour. Audible if you listen for it. Splicing at a word boundary would hide it.
+5. **A real dialog engine.** The protocol is honoured and the stub is deliberately simple — intent classification is a phrase table. That is the right place to put a model, and the seam is already there.
+6. **Per-session provider instances with backpressure.** Each connection currently builds its own pipeline; under load that wants pooling and a queue rather than unbounded sockets.
+
+---
+
+## Documentation
+
+| | |
+|---|---|
+| [docs/DESIGN.md](docs/DESIGN.md) | Requirements, the hard problems, decisions and why |
+| [docs/WORKPLAN.md](docs/WORKPLAN.md) | Phase-by-phase build, with what was measured at each |
+| [docs/TESTING.md](docs/TESTING.md) | The four tiers and what each is for |
+| [docs/DEMO.md](docs/DEMO.md) | Runbook and architecture talking points |

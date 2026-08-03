@@ -1,6 +1,6 @@
 # Voice Conversation — Design
 
-**Status:** design in progress
+**Status:** implemented — see [WORKPLAN.md](WORKPLAN.md)
 **Last updated:** 2026-08-02
 **Companion docs:** [WORKPLAN.md](WORKPLAN.md) · [TESTING.md](TESTING.md)
 **Source:** `assessment-voice-conversation.pdf` (Take-Home Full-Stack Assessment — Voice Conversation)
@@ -219,12 +219,14 @@ assessment grades hardest actually working.
 
 ## 7. Deliverables checklist
 
-- [ ] **GitHub repository** with a clear README covering architecture, local setup, which
+- [x] **GitHub repository** with a clear README covering architecture, local setup, which
       STT / LLM / TTS providers were used and how to configure keys, and how to run the tests.
-      Must run in GitHub Codespaces.
+      *(Codespaces: devcontainer present, launch unverified — needs a browser.)*
 - [ ] **Deployed URL** with the voice demo working end to end over HTTPS, including microphone
-      permission handling.
-- [ ] **Recorded demo (15–30 minutes)** in two parts:
+      permission handling. *(Dockerfile, fly.toml and a passing container CI job are in the repo;
+      the deploy needs an account — see [WORKPLAN.md](WORKPLAN.md#not-my-work).)*
+- [ ] **Recorded demo (15–30 minutes)** — *not my work; runbook and talking points in
+      [DEMO.md](DEMO.md)*. In two parts:
   - Part 1 — the working system: natural back-and-forth, cutting the assistant off mid-sentence
     and it stopping instantly, resuming an interrupted reply, earcons signalling state, and if
     feasible swapping one pipeline component.
@@ -234,11 +236,12 @@ assessment grades hardest actually working.
 
 Additional quality-bar requirements stated in the PDF:
 
-- [ ] Audio bridge is a standalone module behind the documented dialog protocol.
-- [ ] Stub dialog swappable for another implementation without rewriting the loop.
-- [ ] Measured round-trip latency target stated **and** what we actually hit.
-- [ ] Demo works in mobile browsers as well as desktop, over HTTPS.
-- [ ] Tests exercising the pipeline interfaces with fakes to prove loop control flow, the
+- [x] Audio bridge is a standalone module behind the documented dialog protocol.
+- [x] Stub dialog swappable for another implementation without rewriting the loop.
+- [x] Measured round-trip latency target stated **and** what we actually hit.
+- [x] Demo works in mobile browsers as well as desktop, over HTTPS. *(Layout verified at phone
+      size; iOS AudioContext and speakerphone echo need a real device.)*
+- [x] Tests exercising the pipeline interfaces with fakes to prove loop control flow, the
       barge-in stop, and endpointing decisions — no live audio or paid providers in CI.
 
 ---

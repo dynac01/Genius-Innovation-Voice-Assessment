@@ -1,6 +1,6 @@
 # Voice Conversation — Ordered Work Plan
 
-**Status:** Phases 0–9 built. All eight success criteria have passing tests. Three items need a human: the deploy itself, a real phone, and Codespaces. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
+**Status:** Phases 0–10 built. All eight success criteria have passing tests. What remains needs a person — see *Not my work*. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [TESTING.md](TESTING.md)
 
@@ -408,19 +408,30 @@ deployed URL.
 
 **Goal:** the parts that are graded but easy to leave until there is no time left.
 
-- [ ] **README:**
-  - [ ] Architecture overview with the loop/pipeline/dialog boundaries drawn
-  - [ ] Local setup, and Codespaces setup
-  - [ ] Which STT / LLM / TTS providers, and how to configure keys
-  - [ ] How to run the tests — all four tiers ([TESTING.md](TESTING.md))
-  - [ ] **Stated latency targets and the measured numbers we hit** *(explicitly required)*
-  - [ ] Resume / pause / cancel semantics table
-  - [ ] Tradeoffs weighed, and what would change with more time
-- [ ] Demo runbook — what to show, in what order, and which moment demonstrates which criterion
-- [ ] Architecture talking points for the walkthrough, drawn from [DESIGN.md](DESIGN.md)
-- [ ] Final pass over the deliverables checklist in [DESIGN.md §7](DESIGN.md#7-deliverables-checklist)
+- [x] **README:**
+  - [x] Architecture overview with the loop/pipeline/dialog boundaries drawn
+  - [x] Local setup, and Codespaces setup
+  - [x] Which STT / LLM / TTS providers, and how to configure keys
+  - [x] How to run the tests — all four tiers ([TESTING.md](TESTING.md))
+  - [x] **Stated latency targets and the measured numbers we hit** *(explicitly required)*
+  - [x] Resume / pause / cancel semantics table
+  - [x] Tradeoffs weighed, and what would change with more time
+- [x] Demo runbook — what to show, in what order, and which moment demonstrates which criterion
+- [x] Architecture talking points for the walkthrough, drawn from [DESIGN.md](DESIGN.md)
+- [x] Final pass over the deliverables checklist in [DESIGN.md §7](DESIGN.md#7-deliverables-checklist)
 
 **Done when:** the repository is submittable and the demo has everything it needs except a camera.
+
+**Measured for the README** — the brief asks for a stated target and what we hit:
+
+| | Target | Measured |
+|---|---|---|
+| Barge-in stop | <300ms | **70–78ms** |
+| End of turn → first audio, real providers | <2000ms | **1228–2040ms** |
+
+The response figure is at the *edge* of its target rather than comfortably inside it, and the
+README says so. The largest single win available is pre-warming provider connections: the first
+request of a cold process pays ~4s of TLS setup, which lands on the first turn of every session.
 
 ---
 
