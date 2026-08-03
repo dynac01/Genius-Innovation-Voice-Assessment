@@ -67,6 +67,18 @@ export type ServerEvent =
   | { type: 'state'; state: TurnState }
   /** Drop buffered audio now — the assistant has been cut off. */
   | { type: 'flush_audio' }
+  /**
+   * A server-side diagnostic, relayed so the browser's downloadable log contains
+   * both halves of the session.
+   *
+   * Deliberately part of the protocol rather than a side channel. The failures this
+   * was built for are the ones where each side looks healthy on its own and only the
+   * *pairing* is wrong — a declared sample rate that does not match the samples, a
+   * transcriber that answers nothing because of it. Neither log shows that alone,
+   * and asking someone to collect two files and correlate them by wall clock is how
+   * you end up with one file and a guess.
+   */
+  | { type: 'log'; at: number; kind: string; data?: unknown }
   | { type: 'error'; message: string };
 
 /**
@@ -151,6 +163,7 @@ export function isServerEvent(value: unknown): value is ServerEvent {
     type === 'earcon' ||
     type === 'state' ||
     type === 'flush_audio' ||
+    type === 'log' ||
     type === 'error'
   );
 }

@@ -14,7 +14,7 @@ const STAGES = [
 ] as const;
 
 export function App() {
-  const { state, wanted, start, stop, choose } = useVoiceSession();
+  const { state, wanted, start, stop, choose, logSize, saveLog } = useVoiceSession();
 
   const secureContext = window.isSecureContext;
   const hasMediaDevices = typeof navigator.mediaDevices?.getUserMedia === 'function';
@@ -46,15 +46,34 @@ export function App() {
         </li>
       </ul>
 
-      <button
-        type="button"
-        className="primary"
-        data-testid="session-toggle"
-        disabled={!ready}
-        onClick={active ? stop : start}
-      >
-        {active ? 'Stop session' : 'Start session'}
-      </button>
+      <div className="controls">
+        <button
+          type="button"
+          className="primary"
+          data-testid="session-toggle"
+          disabled={!ready}
+          onClick={active ? stop : start}
+        >
+          {active ? 'Stop session' : 'Start session'}
+        </button>
+
+        {/*
+          Enabled whenever there is anything to save, including after a session has
+          stopped. A log you can only download while the thing is still running is
+          the wrong shape for reporting a fault, because stopping is usually the
+          first thing anyone does when something goes wrong.
+        */}
+        <button
+          type="button"
+          className="secondary"
+          data-testid="download-log"
+          disabled={logSize === 0}
+          onClick={saveLog}
+          title="Everything both sides of the socket did this session, as JSON"
+        >
+          Download logs{logSize > 0 && <span className="count">{logSize}</span>}
+        </button>
+      </div>
 
       {state.error !== undefined && (
         <p className="error" role="alert" data-testid="error">

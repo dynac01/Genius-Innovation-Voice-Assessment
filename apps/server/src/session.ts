@@ -58,7 +58,7 @@ export class Session {
       clock: this.#options.clock,
       endpointer: setup.endpointer,
       onEvent: (event) => this.#relay(event),
-      onWarning: (message) => this.#log(message),
+      onWarning: (message) => this.#diag('bridge.warning', { message }),
     });
     return setup.selected;
   }
@@ -72,7 +72,16 @@ export class Session {
         if (event.sampleRate > 0) this.#sampleRate = event.sampleRate;
 
         const selected = this.#build(event.providers);
-        this.#log(`pipeline stt=${selected.stt} llm=${selected.llm} tts=${selected.tts}`);
+        // The declared rate is logged next to whether it was declared at all,
+        // because a browser that announces nothing and a server that assumes 16000
+        // is precisely the pairing that transcribes to silence with no error.
+        this.#diag('session.hello', {
+          announcedRate: event.sampleRate,
+          usingRate: this.#sampleRate,
+          assumed: event.sampleRate <= 0,
+          requested: event.providers,
+          selected,
+        });
         // `selected`, not what was asked for: a stage whose key is missing falls
         // back, and the UI must show what loaded rather than what was requested.
         this.#emit({
@@ -93,7 +102,7 @@ export class Session {
         // The browser has already silenced its own output by the time this arrives.
         // This is the slow path: abandon generation and synthesis, and record what
         // the user actually heard so Phase 5 can resume from it.
-        this.#log(`interrupt at t=${event.t}`);
+        this.#diag('client.interrupt', { t: event.t });
         this.#bridge?.interrupt(event.t);
         break;
     }
@@ -139,20 +148,22 @@ export class Session {
         // Tell the browser to drop anything still queued. It has already ramped its
         // own output down locally; this clears frames that were in flight.
         this.#emit({ type: 'flush_audio' });
-        this.#log(`interrupted after ${event.spokenChars} chars`);
+        this.#diag('turn.interrupted', { spokenChars: event.spokenChars });
         break;
       case 'pause_detected':
         // Already forwarded to the dialog over the protocol; the browser has no use
         // for it, so it is only logged here.
-        this.#log(`pause at t=${event.at}`);
+        this.#diag('turn.pause', { at: event.at });
         break;
       case 'resumed':
-        this.#log(`resumed from char ${event.from}`);
+        this.#diag('turn.resumed', { fromChar: event.from });
         break;
       case 'state':
+        this.#diag('turn.state', { state: event.state });
         this.#emit({ type: 'state', state: event.state });
         break;
       case 'transcript':
+        this.#diag('stt.transcript', { final: event.final, chars: event.text.length });
         this.#emit({ type: 'transcript', text: event.text, final: event.final });
         break;
       case 'assistant_text':
@@ -162,6 +173,7 @@ export class Session {
         this.#emit({ type: 'earcon', sound: event.sound });
         break;
       case 'error':
+        this.#diag('bridge.error', { message: event.message });
         this.#emit({ type: 'error', message: event.message });
         break;
     }
@@ -172,6 +184,20 @@ export class Session {
       chunk.span === undefined
         ? { seq: this.#outboundSeq, pcm: chunk.pcm }
         : { seq: this.#outboundSeq, pcm: chunk.pcm, span: chunk.span };
+
+    // The first frame of a reply is the interesting one: it dates the moment
+    // synthesis actually produced sound, which is what "the assistant said
+    // nothing" versus "the assistant was inaudible" turns on. The rest are
+    // sampled — one line per frame at 50 a second buries everything else.
+    if (this.#outboundSeq === 0 || this.#outboundSeq % 50 === 0) {
+      this.#diag('tts.audio', {
+        seq: this.#outboundSeq,
+        samples: chunk.pcm.length,
+        sampleRate: chunk.sampleRate,
+        hasSpan: chunk.span !== undefined,
+      });
+    }
+
     this.#outboundSeq += 1;
     this.#options.send(encodeAudioFrame(frame));
   }
@@ -183,7 +209,7 @@ export class Session {
 
   #fail(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
-    this.#log(`session failed: ${message}`);
+    this.#diag('session.failed', { message });
     // Surface rather than hang. "No silent failures" is an evaluation line, and a
     // provider hiccup must reach the user as a failed earcon, not a dead socket.
     this.#options.send(JSON.stringify({ type: 'earcon', sound: 'failed' } satisfies ServerEvent));
@@ -191,7 +217,23 @@ export class Session {
     this.close();
   }
 
-  #log(message: string): void {
-    this.#options.log?.(`[${this.#options.sessionId}] ${message}`);
+  /**
+   * A structured diagnostic.
+   *
+   * Goes two places on purpose. The console is for whoever is running the process;
+   * the socket is for whoever is reporting the fault, who is usually not the same
+   * person and cannot be asked to paste a terminal. Sending it costs one small text
+   * frame against an audio stream measured in megabytes.
+   */
+  #diag(kind: string, data?: unknown): void {
+    this.#options.log?.(
+      `[${this.#options.sessionId}] ${kind}${data === undefined ? '' : ` ${JSON.stringify(data)}`}`,
+    );
+    this.#emit({
+      type: 'log',
+      at: Math.round(this.#options.clock.now()),
+      kind,
+      ...(data === undefined ? {} : { data }),
+    });
   }
 }

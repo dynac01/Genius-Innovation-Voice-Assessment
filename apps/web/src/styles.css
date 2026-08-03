@@ -296,3 +296,66 @@ h2 {
   /* Fast attack, slower release: catches transients, avoids a flickering bar. */
   transition: width 90ms ease-out;
 }
+
+.controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.controls .primary {
+  flex: 1 1 12rem;
+}
+
+/*
+ * Secondary action. Deliberately quiet — it is reached for when something has gone
+ * wrong, not during normal use, and a second loud button next to the one that
+ * starts the session would compete with it every time.
+ */
+.controls .secondary {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  border-radius: 10px;
+  padding: 0 1rem;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.controls .secondary:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.controls .secondary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/*
+ * On a phone the two share a row badly: the session control is the one you aim a
+ * thumb at, and splitting the width costs it the 44pt target it is sized for. It
+ * gets the full row back and the quieter action sits under it.
+ */
+@media (max-width: 30rem) {
+  .controls {
+    flex-direction: column;
+  }
+
+  .controls .secondary {
+    padding: 0.6rem 1rem;
+    justify-content: center;
+  }
+}
+
+.controls .count {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8em;
+  color: var(--muted);
+}

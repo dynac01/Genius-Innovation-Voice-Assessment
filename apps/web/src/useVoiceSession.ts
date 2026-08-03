@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AudioEngine, MicrophoneError } from './audio/engine.js';
 import type { MicPermission } from './audio/engine.js';
+import { SessionLog, downloadLog } from './log.js';
 import { VoiceSocket, socketUrl } from './transport.js';
 import type { SocketStatus } from './transport.js';
 
@@ -119,11 +120,21 @@ export function useVoiceSession(): {
   start: () => void;
   stop: () => void;
   choose: (stage: keyof PipelineSelection, value: string) => void;
+  /** Records captured so far, so the download control can show its own weight. */
+  logSize: number;
+  saveLog: () => void;
 } {
   const [state, setState] = useState<SessionState>(INITIAL);
   const [wanted, setWanted] = useState<PipelineSelection>(DEFAULT_WANTED);
   const wantedRef = useRef(wanted);
   wantedRef.current = wanted;
+
+  const logRef = useRef(new SessionLog());
+  // Records are pushed imperatively and read on demand; mirroring the whole log
+  // into React state would re-render the tree on every audio frame. Only the count
+  // is state, and only so the button can show it.
+  const [logSize, setLogSize] = useState(0);
+  useEffect(() => logRef.current.subscribe(() => setLogSize(logRef.current.size)), []);
 
   const engineRef = useRef<AudioEngine | undefined>(undefined);
   const socketRef = useRef<VoiceSocket | undefined>(undefined);
@@ -156,9 +167,46 @@ export function useVoiceSession(): {
     startingRef.current = true;
 
     setState({ ...INITIAL, phase: 'starting' });
+    const log = logRef.current;
+    log.reset();
+    log.record('browser', 'session.start', { wanted: wantedRef.current, url: socketUrl() });
+
     const engine = new AudioEngine();
     engineRef.current = engine;
     const connectStartedAt = performance.now();
+
+    /*
+     * `hello` waits for both the socket and the microphone.
+     *
+     * The two start together on purpose — the permission prompt and the WebSocket
+     * handshake have no reason to queue behind each other — but `hello` carries the
+     * capture rate, and the rate does not exist until `getUserMedia` has resolved
+     * and a context has been built around it. The socket opens in ~15ms and the
+     * microphone takes far longer, so sending on open reliably announces a rate of
+     * zero and leaves the server to guess.
+     *
+     * That guess was 16000, which was silently correct for exactly as long as the
+     * browser was pinned to 16000, and became silently wrong the moment it wasn't:
+     * the server declared 16kHz to a transcriber that was being fed 44.1kHz, which
+     * it read as gibberish and answered with nothing. No error anywhere — just
+     * frames going out and no transcript coming back.
+     *
+     * So the announcement is gated on both facts being true, whichever order they
+     * arrive in, and the rate on the wire is now always one that was measured.
+     */
+    let announced = false;
+    const announce = (): void => {
+      if (announced || !socket.open || engine.sampleRate === 0) return;
+      announced = true;
+      const hello = {
+        type: 'hello',
+        sampleRate: engine.sampleRate,
+        providers: wantedRef.current,
+      } as const;
+      log.record('browser', 'send.hello', hello);
+      socket.sendEvent(hello);
+      socket.sendEvent({ type: 'start' });
+    };
 
     const socket = new VoiceSocket(socketUrl(), {
       onOpen: () => {
@@ -166,14 +214,13 @@ export function useVoiceSession(): {
           ...prev,
           connectMs: Math.round(performance.now() - connectStartedAt),
         }));
-        socket.sendEvent({
-          type: 'hello',
-          sampleRate: engine.sampleRate,
-          providers: wantedRef.current,
-        });
-        socket.sendEvent({ type: 'start' });
+        announce();
       },
       onEvent: (event) => {
+        // Recorded before it is handled, so the log shows what arrived even if
+        // handling it throws. Audio frames are counted separately — they are
+        // binary and do not pass through here.
+        log.record('browser', `recv.${event.type}`, event);
         switch (event.type) {
           case 'ready':
             setState((prev) => ({
@@ -252,6 +299,11 @@ export function useVoiceSession(): {
               earconCount: prev.earconCount + 1,
             }));
             break;
+          case 'log':
+            // Re-tagged so a reader can tell the two halves apart, and dropped from
+            // the browser-side record above so it appears once.
+            log.recordServer(event.kind, event.data);
+            break;
           case 'flush_audio':
             engine.flush();
             // The reply was cut off mid-sentence; say so rather than leaving a
@@ -282,17 +334,25 @@ export function useVoiceSession(): {
               : Math.round(performance.now() - finalAtRef.current)),
         }));
       },
-      onError: (message) => setState((prev) => ({ ...prev, phase: 'error', error: message })),
-      onStatus: (connection) => setState((prev) => ({ ...prev, connection })),
+      onError: (message) => {
+        log.record('browser', 'socket.error', { message });
+        setState((prev) => ({ ...prev, phase: 'error', error: message }));
+      },
+      onStatus: (connection) => {
+        log.record('browser', 'socket.status', { connection });
+        setState((prev) => ({ ...prev, connection }));
+      },
       // A dropped socket now reconnects on its own, so a close is not the end of
       // the session — the status field says which it is, and the phase only falls
       // back to idle once the socket is genuinely done.
-      onClose: () =>
+      onClose: () => (
+        log.record('browser', 'socket.close'),
         setState((prev) =>
           prev.phase === 'error' || prev.connection === 'reconnecting'
             ? prev
             : { ...prev, phase: 'idle' },
-        ),
+        )
+      ),
     });
     socketRef.current = socket;
 
@@ -303,10 +363,18 @@ export function useVoiceSession(): {
           seqRef.current += 1;
           setState((prev) => ({ ...prev, framesSent: prev.framesSent + 1 }));
         },
-        onPermissionChange: (permission) => setState((prev) => ({ ...prev, permission })),
+        onLog: (kind, data) => log.record('browser', kind, data),
+        onPermissionChange: (permission) => {
+          log.record('browser', 'mic.permission', { permission });
+          setState((prev) => ({ ...prev, permission }));
+        },
         onBargeIn: (measurement) => {
           // Output is already silent by the time this runs. The socket is being
           // told what happened so the loop can decide what it *meant*.
+          log.record('browser', 'audio.barge_in', {
+            detectToSilentMs: Math.round(measurement.detectToSilent),
+            onsetToSilentMs: Math.round(measurement.onsetToSilent),
+          });
           socket.sendEvent({ type: 'interrupt', t: Math.round(performance.now()) });
           setState((prev) => ({
             ...prev,
@@ -316,7 +384,12 @@ export function useVoiceSession(): {
         },
       })
       .then(() => {
+        // The engine's own account of what it got. Every silent-audio fault so far
+        // would have been visible in this one record.
+        log.record('browser', 'engine.started', engine.describe());
         setState((prev) => ({ ...prev, sampleRate: engine.sampleRate }));
+        // The other half of the gate: the microphone may well win this race.
+        announce();
       })
       .catch((error: unknown) => {
         const message =
@@ -325,6 +398,7 @@ export function useVoiceSession(): {
             : error instanceof Error
               ? error.message
               : 'Could not start audio.';
+        log.record('browser', 'engine.failed', { message });
         setState((prev) => ({ ...prev, phase: 'error', error: message }));
         socket.close();
         startingRef.current = false;
@@ -411,5 +485,39 @@ export function useVoiceSession(): {
 
   useEffect(() => () => stop(), [stop]);
 
-  return { state, wanted, start, stop, choose };
+  /**
+   * Write the log to a file.
+   *
+   * The current UI state is folded in rather than left to be reconstructed from the
+   * record stream: a reader should be able to see the counters that were on screen
+   * when the report was made without replaying every event to derive them, and
+   * those counters are the first thing anyone looks at.
+   */
+  const saveLog = useCallback(() => {
+    const stamp = new Date().toISOString().replace(/[:.]/gu, '-');
+    logRef.current.record('browser', 'log.saved');
+    downloadLog(
+      `voice-session-${stamp}.json`,
+      logRef.current.toJson({
+        engine: engineRef.current?.describe() ?? { started: false },
+        state: {
+          phase: state.phase,
+          turn: state.turn,
+          connection: state.connection,
+          permission: state.permission,
+          captureRate: state.sampleRate,
+          framesSent: state.framesSent,
+          framesReceived: state.framesReceived,
+          bargeIns: state.bargeIns,
+          outputLevel: state.outputLevel,
+          selected: state.selected,
+          available: state.available,
+          error: state.error,
+        },
+        conversation: state.lines,
+      }),
+    );
+  }, [state]);
+
+  return { state, wanted, start, stop, choose, logSize, saveLog };
 }

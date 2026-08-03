@@ -47,6 +47,14 @@ export interface AudioEngineHandlers {
    * latency budget on a round trip before anything stopped.
    */
   onBargeIn?: (measurement: BargeInMeasurement) => void;
+  /**
+   * Diagnostic sink.
+   *
+   * The engine is the one layer whose failures are inaudible *and* invisible — a
+   * context the device refused, a gain node stuck at zero, buffers scheduled into
+   * the past. None of it throws. This is how it says what it did.
+   */
+  onLog?: (kind: string, data?: unknown) => void;
 }
 
 /**
@@ -95,6 +103,8 @@ export class AudioEngine {
   #assistantActive = false;
   #earcons: EarconPlayer | undefined;
   #meter: AnalyserNode | undefined;
+  #log: ((kind: string, data?: unknown) => void) | undefined;
+  #playCount = 0;
   #meterFrame: Float32Array<ArrayBuffer> | undefined;
   #lastBargeIn: BargeInMeasurement | undefined;
 
@@ -137,6 +147,7 @@ export class AudioEngine {
    */
   async start(handlers: AudioEngineHandlers): Promise<void> {
     if (this.#context !== undefined) return;
+    this.#log = handlers.onLog;
 
     const stream = await this.#requestMicrophone(handlers.onPermissionChange);
 
@@ -252,6 +263,32 @@ export class AudioEngine {
   }
 
   /**
+   * Everything about the audio stack that a fault report needs.
+   *
+   * Assembled in one place because these fields are only meaningful together: a
+   * context rate on its own says nothing, but a context rate next to the rate the
+   * frames are encoded at is the entire diagnosis of a session that transcribes to
+   * nothing. `outputLatency` is included because a device reporting an implausible
+   * figure is a good early sign that the browser and the hardware disagree.
+   */
+  describe(): Record<string, unknown> {
+    const context = this.#context;
+    if (context === undefined) return { started: false };
+    return {
+      started: true,
+      sampleRate: context.sampleRate,
+      state: context.state,
+      baseLatencyMs: Math.round((context.baseLatency ?? 0) * 1000),
+      outputLatencyMs: Math.round((context.outputLatency ?? 0) * 1000),
+      destinationChannels: context.destination.channelCount,
+      captureFrameMs: CAPTURE_FRAME_MS,
+      jitterBufferMs: JITTER_BUFFER_MS,
+      stopRampMs: STOP_RAMP_MS,
+      outputGain: this.#output?.gain.value,
+    };
+  }
+
+  /**
    * Peak amplitude currently reaching the speaker, 0–1.
    *
    * Sampled on demand rather than pushed, so a UI that stops looking costs nothing.
@@ -318,6 +355,23 @@ export class AudioEngine {
 
     source.start(startAt);
 
+    // The first frame of a run dates the moment sound was actually scheduled, and
+    // carries the gain — which is the field that distinguishes "nothing was
+    // scheduled" from "everything was scheduled into a muted node".
+    if (this.#playCount === 0 || this.#playCount % 50 === 0) {
+      this.#log?.('audio.play', {
+        n: this.#playCount,
+        samples: pcm.length,
+        frameRate: sampleRate,
+        contextRate: context.sampleRate,
+        startInMs: Math.round((startAt - context.currentTime) * 1000),
+        queued: this.#scheduled.length,
+        gain: Math.round(output.gain.value * 1000) / 1000,
+        contextState: context.state,
+      });
+    }
+    this.#playCount += 1;
+
     const endsAt = startAt + buffer.duration;
     this.#nextStartAt = endsAt;
     this.#scheduled.push({ source, startedAt: startAt, endsAt });
@@ -340,6 +394,8 @@ export class AudioEngine {
 
     const now = context.currentTime;
     const rampEnd = now + STOP_RAMP_MS / 1000;
+    const gainBefore = output.gain.value;
+    const stoppedCount = this.#scheduled.length;
 
     output.gain.cancelScheduledValues(now);
     output.gain.setValueAtTime(output.gain.value, now);
@@ -358,6 +414,12 @@ export class AudioEngine {
     // Restore gain strictly after every stop has taken effect, so the next reply is
     // audible without unmuting anything still in flight.
     output.gain.setValueAtTime(1, rampEnd + 0.001);
+
+    this.#log?.('audio.flush', {
+      stopped: stoppedCount,
+      rampMs: STOP_RAMP_MS,
+      gainBefore: Math.round(gainBefore * 1000) / 1000,
+    });
 
     // The audio-clock time at which output is genuinely silent.
     return rampEnd;
