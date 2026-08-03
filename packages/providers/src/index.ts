@@ -26,3 +26,6 @@ export { DeepgramStt } from './deepgram/stt.js';
 
 export type { DeepgramTtsOptions } from './deepgram/tts.js';
 export { DeepgramTts } from './deepgram/tts.js';
+
+export { toInt16Samples } from './ws-binary.js';
+export type { BinaryMessage } from './ws-binary.js';

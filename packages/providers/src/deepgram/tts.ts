@@ -1,6 +1,10 @@
 import type { AudioChunk, TTS } from '@voice/core';
 import { AsyncQueue } from '@voice/core';
 import WebSocket from 'ws';
+import type { RawData } from 'ws';
+
+import { toInt16Samples } from '../ws-binary.js';
+import type { BinaryMessage } from '../ws-binary.js';
 
 export interface DeepgramTtsOptions {
   readonly apiKey: string;
@@ -61,13 +65,21 @@ export class DeepgramTts implements TTS {
 
     const frames = new AsyncQueue<Int16Array>();
 
-    socket.on('message', (data: Buffer, isBinary: boolean) => {
+    /*
+     * `RawData`, not `Buffer`.
+     *
+     * The previous annotation here said `Buffer` and was simply wrong — `ws` hands
+     * over an `ArrayBuffer` when `binaryType` is `'arraybuffer'`. An annotation is
+     * an assertion rather than a check, so the compiler agreed, and the decoder
+     * read `.buffer` and `.byteOffset` off a value that has neither. Both came back
+     * `undefined`, `new Uint8Array(undefined, undefined, n)` produced an empty
+     * array rather than throwing, and every frame arrived correctly sized, on time,
+     * and completely silent. Taking the honest type is what makes the normaliser
+     * mandatory instead of optional.
+     */
+    socket.on('message', (data: RawData, isBinary: boolean) => {
       if (isBinary) {
-        // Deepgram frames are whole 16-bit samples; a copy keeps the view off
-        // Node's shared pool, which would otherwise be reused underneath us.
-        const copy = new ArrayBuffer(data.byteLength - (data.byteLength % 2));
-        new Uint8Array(copy).set(new Uint8Array(data.buffer, data.byteOffset, copy.byteLength));
-        frames.push(new Int16Array(copy));
+        frames.push(toInt16Samples(data as BinaryMessage));
         return;
       }
       try {

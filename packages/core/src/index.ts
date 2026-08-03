@@ -44,6 +44,7 @@ export type {
   StartRaceOutcome,
 } from './start-race.js';
 export { DEFAULT_START_RACE, StartRace, claimFrom } from './start-race.js';
+export { Resampler } from './resample.js';
 
 export type { IdleTimeoutOptions } from './timeout.js';
 export { ProviderStallError, withIdleTimeout } from './timeout.js';

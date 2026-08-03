@@ -9,7 +9,7 @@
  * docs/TESTING.md §2.
  */
 
-import { DEFAULT_VAD, StartRace, Vad, claimFrom } from '@voice/core';
+import { DEFAULT_VAD, Resampler, StartRace, Vad, claimFrom } from '@voice/core';
 import type { EarconSound } from '@voice/core';
 
 import { EarconPlayer } from './earcons.js';
@@ -111,6 +111,7 @@ export class AudioEngine {
   #meter: AnalyserNode | undefined;
   #log: ((kind: string, data?: unknown) => void) | undefined;
   #playCount = 0;
+  #resampler: Resampler | undefined;
   #wasSpeaking = false;
   #meterTimer: ReturnType<typeof setInterval> | undefined;
   #toneUntil = 0;
@@ -500,12 +501,31 @@ export class AudioEngine {
     const output = this.#output;
     if (context === undefined || output === undefined || pcm.length === 0) return;
 
-    const buffer = context.createBuffer(1, pcm.length, sampleRate);
-    const channel = buffer.getChannelData(0);
-    for (let i = 0; i < pcm.length; i += 1) {
-      const sample = pcm[i] ?? 0;
-      channel[i] = sample < 0 ? sample / 0x8000 : sample / 0x7fff;
+    /*
+     * Convert to the context's rate here rather than declaring the buffer's own
+     * rate and letting Web Audio do it.
+     *
+     * The spec permits the second, it is the obvious approach, and it produced
+     * silence: a session log measured 0.000 output across three replies from 24kHz
+     * buffers in a 44.1kHz context — queue draining, gain 1, context running — while
+     * a tone built at the context's rate hit 0.25 through the same node in the same
+     * instant. No exception, no warning, nothing to see except a person saying they
+     * hear nothing.
+     *
+     * So no buffer handed to Web Audio ever declares a rate other than the
+     * context's, and the browser is never asked to convert. The resampler is
+     * stateful because frames are 40ms apart and interpolation needs the previous
+     * sample; resampling each frame in isolation puts a discontinuity into the
+     * signal 25 times a second.
+     */
+    if (this.#resampler?.fromRate !== sampleRate) {
+      this.#resampler = new Resampler(sampleRate, context.sampleRate);
     }
+    const samples = this.#resampler.process(pcm);
+    if (samples.length === 0) return;
+
+    const buffer = context.createBuffer(1, samples.length, context.sampleRate);
+    buffer.getChannelData(0).set(samples);
 
     const source = context.createBufferSource();
     source.buffer = buffer;
@@ -543,7 +563,11 @@ export class AudioEngine {
       this.#log?.('audio.play', {
         n: this.#playCount,
         samples: pcm.length,
+        // Both rates, deliberately: the invariant that matters is that the buffer
+        // is built at the context's rate, and a log that omits it cannot show that.
         frameRate: sampleRate,
+        bufferRate: context.sampleRate,
+        bufferSamples: samples.length,
         contextRate: context.sampleRate,
         startInMs: Math.round((startAt - context.currentTime) * 1000),
         queued: this.#scheduled.length,
@@ -591,6 +615,8 @@ export class AudioEngine {
     }
     this.#scheduled = [];
     this.#nextStartAt = 0;
+    // A discarded reply must not leave a tail for the next one to interpolate from.
+    this.#resampler?.reset();
 
     // Restore gain strictly after every stop has taken effect, so the next reply is
     // audible without unmuting anything still in flight.
@@ -638,6 +664,8 @@ export class AudioEngine {
     this.#earcons = undefined;
     this.#scheduled = [];
     this.#nextStartAt = 0;
+    // A discarded reply must not leave a tail for the next one to interpolate from.
+    this.#resampler?.reset();
   }
 
   async #requestMicrophone(onChange?: (permission: MicPermission) => void): Promise<MediaStream> {

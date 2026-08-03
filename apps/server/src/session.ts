@@ -190,11 +190,30 @@ export class Session {
     // nothing" versus "the assistant was inaudible" turns on. The rest are
     // sampled — one line per frame at 50 a second buries everything else.
     if (this.#outboundSeq === 0 || this.#outboundSeq % 50 === 0) {
+      /*
+       * The *level* of the samples, not just their count.
+       *
+       * "A frame of 960 samples arrived" is true of silence and of speech alike, so
+       * a log containing only shapes cannot distinguish a synthesiser that returned
+       * nothing from a playback path that lost it. That ambiguity survived several
+       * rounds of diagnosis. One number removes it.
+       */
+      let sum = 0;
+      let peak = 0;
+      for (const sample of chunk.pcm) {
+        sum += sample * sample;
+        peak = Math.max(peak, Math.abs(sample));
+      }
+      const rms = chunk.pcm.length === 0 ? 0 : Math.sqrt(sum / chunk.pcm.length) / 32_768;
+
       this.#diag('tts.audio', {
         seq: this.#outboundSeq,
         samples: chunk.pcm.length,
         sampleRate: chunk.sampleRate,
         hasSpan: chunk.span !== undefined,
+        rms: Math.round(rms * 1000) / 1000,
+        peak: Math.round((peak / 32_768) * 1000) / 1000,
+        silent: peak === 0,
       });
     }
 

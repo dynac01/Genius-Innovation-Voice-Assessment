@@ -1,6 +1,7 @@
 import type { AudioChunk, AudioStream, STT } from '@voice/core';
 import { AsyncQueue } from '@voice/core';
 import WebSocket from 'ws';
+import type { RawData } from 'ws';
 
 export interface DeepgramSttOptions {
   readonly apiKey: string;
@@ -76,7 +77,12 @@ export class DeepgramStt implements STT {
     const socket = new WebSocket(this.#url(firstChunk.sampleRate), {
       headers: { Authorization: `Token ${this.#options.apiKey}` },
     });
-    socket.binaryType = 'arraybuffer';
+    /*
+     * No `binaryType` override: this socket only ever receives JSON, and setting it
+     * changes what `ws` hands to the message handler. Doing that while annotating
+     * the handler `Buffer` is exactly how the TTS decoder came to silently produce
+     * silence — see ws-binary.ts. Nothing here needs it, so nothing here sets it.
+     */
 
     const results = new AsyncQueue<{ text: string; final: boolean }>();
     let committed = '';
@@ -91,7 +97,7 @@ export class DeepgramStt implements STT {
       if (utterance !== '') results.push({ text: utterance, final: true });
     };
 
-    socket.on('message', (data: Buffer) => {
+    socket.on('message', (data: RawData) => {
       let parsed: DeepgramMessage;
       try {
         parsed = JSON.parse(data.toString()) as DeepgramMessage;

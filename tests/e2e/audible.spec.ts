@@ -2,22 +2,28 @@
  * Does the assistant make a sound?
  *
  * This test exists because the rest of the suite could not answer that question,
- * and a bug walked straight through the gap. Every audio assertion in the project
+ * and bugs walked straight through the gap. Every audio assertion in the project
  * checked that frames were *produced*, *delivered*, *decoded*, and *scheduled* —
- * and all of them passed while the browser output was silent, because the
- * AudioContext had been pinned to a sample rate the output device would not run
- * at. The pipeline was healthy end to end and nobody could hear it.
+ * all of which stayed true through two separate faults that left the room silent.
  *
- * The lesson generalises past that one bug: "audio was scheduled" and "audio was
- * audible" are different claims, and only the second one is the product. Between
- * them sit the context's rate and state, gain automation, node connectivity, and
- * whatever a browser decides to do with a buffer whose rate it dislikes — none of
- * which raise an error when they go wrong. They just go quiet.
+ * "Audio was scheduled" and "audio was audible" are different claims, and only the
+ * second one is the product. Between them sit the context's rate and state, gain
+ * automation, node connectivity, and what a browser does with a buffer whose rate
+ * it dislikes — none of which raise an error when they go wrong. They go quiet.
  *
- * So this measures the last observable thing before the speaker: a tap on
- * `AudioContext.destination` reading real samples. The tap is installed by
- * wrapping the constructor before app code runs, and it only ever *adds* a
- * connection — the graph under test is the graph that ships.
+ * ## What this file taps, and the mistake it is correcting
+ *
+ * The probe below wraps `connect` and mirrors anything bound for the destination
+ * into an analyser. That is deliberately broad, and being broad once made it lie:
+ * it was reporting healthy peaks from the *earcons* — which are generated at the
+ * context's rate and always worked — while the speech path, on a different node,
+ * produced nothing at all. A measurement that sums two sources cannot tell you one
+ * of them is silent.
+ *
+ * So the audibility claim now rests on the app's own meter, which is wired to the
+ * speech output node alone and therefore cannot be flattered by a chime. The broad
+ * probe is kept for what it is genuinely good at: proving the graph as a whole
+ * reaches the destination, and that the context runs at a rate it chose.
  */
 
 import { expect, test } from '@playwright/test';
@@ -162,6 +168,25 @@ test('the log records what left the graph, not just what was scheduled', async (
   // The measurement must be of real samples, not a restatement of the gain.
   const peaks = levels.map((r) => Number(r.data?.['peak'] ?? 0));
   expect(Math.max(...peaks), 'meter never registered any signal').toBeGreaterThan(0.005);
+
+  /*
+   * Every buffer must be built at the context's own rate.
+   *
+   * This is the invariant that makes the browser's resampling behaviour irrelevant,
+   * and it is asserted rather than trusted because the alternative was tried: the
+   * spec permits an AudioBuffer to declare its own rate, and a 24kHz buffer in a
+   * 44.1kHz context measured 0.000 output across three replies on a real machine.
+   * Headless Chromium resamples that case perfectly well, so no amount of measuring
+   * *here* can catch it — only refusing to rely on the conversion can.
+   */
+  const plays = parsed.log.filter((r) => r.kind === 'audio.play');
+  expect(plays.length).toBeGreaterThan(0);
+  for (const play of plays) {
+    expect(
+      play.data?.['bufferRate'],
+      'a buffer was declared at a rate the context did not choose',
+    ).toBe(play.data?.['contextRate']);
+  }
 });
 
 test('the speaker test reports a measurement, not a hope', async ({ page }) => {
