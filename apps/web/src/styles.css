@@ -256,3 +256,43 @@ h2 {
   font-size: 0.75rem;
   color: var(--error);
 }
+
+/*
+ * Output meter.
+ *
+ * Peak-following with no smoothing, so speech reads as motion rather than a level
+ * that drifts. The fill is scaled past 1:1 because normal speech peaks well below
+ * full scale and a bar that never leaves the first third looks broken — the number
+ * that matters here is "moving or not", not an accurate dBFS reading.
+ */
+.meter {
+  margin: 1rem 0;
+}
+
+.meter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.meter-hint {
+  font-variant-numeric: tabular-nums;
+}
+
+.meter-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  /* Fast attack, slower release: catches transients, avoids a flickering bar. */
+  transition: width 90ms ease-out;
+}

@@ -14,11 +14,12 @@ import type { EarconSound } from '@voice/core';
 
 import { EarconPlayer } from './earcons.js';
 
-/** Requested capture rate. Most browsers honour it; we report whatever we get. */
-const PREFERRED_SAMPLE_RATE = 16_000;
-
-/** 20ms at 16kHz. Small frames keep the barge-in stop granular. */
-const CAPTURE_FRAME_SAMPLES = 320;
+/**
+ * Capture frame duration. Small frames keep the barge-in stop granular; the
+ * sample count is derived from the context's actual rate so this stays constant
+ * whatever hardware we land on.
+ */
+const CAPTURE_FRAME_MS = 20;
 
 /**
  * How far ahead of the playhead audio is scheduled.
@@ -93,6 +94,8 @@ export class AudioEngine {
   readonly #race = new StartRace();
   #assistantActive = false;
   #earcons: EarconPlayer | undefined;
+  #meter: AnalyserNode | undefined;
+  #meterFrame: Float32Array<ArrayBuffer> | undefined;
   #lastBargeIn: BargeInMeasurement | undefined;
 
   get sampleRate(): number {
@@ -137,26 +140,34 @@ export class AudioEngine {
 
     const stream = await this.#requestMicrophone(handlers.onPermissionChange);
 
-    let context: AudioContext;
-    try {
-      context = new AudioContext({ sampleRate: PREFERRED_SAMPLE_RATE, latencyHint: 'interactive' });
-    } catch {
-      // Some browsers reject an explicit rate. Take the default and tell the server
-      // what we actually got rather than resampling and inviting artefacts.
-      context = new AudioContext({ latencyHint: 'interactive' });
-    }
+    /*
+     * The context runs at the hardware's own rate — deliberately not forced.
+     *
+     * One AudioContext serves both capture and playback here, so a rate chosen to
+     * suit the microphone is also imposed on the speaker. Asking for 16kHz makes
+     * the capture side tidy and asks the output device to run at a rate it may
+     * not support; the failure is not an exception but silence, which is the
+     * worst way for it to fail. Playback is the side with a user attached to it,
+     * so it gets the native rate, and the capture side sends whatever it got and
+     * says so in `hello`. The server never assumed a rate anyway.
+     */
+    const context = new AudioContext({ latencyHint: 'interactive' });
     if (context.state === 'suspended') await context.resume();
 
     await context.audioWorklet.addModule('/worklets/capture-processor.js');
+
+    // Frame size follows the rate we were given, so frame *duration* — which is
+    // what the detectors are tuned against — stays put across devices.
+    const frameSamples = Math.round((CAPTURE_FRAME_MS / 1000) * context.sampleRate);
+    const frameMs = (frameSamples / context.sampleRate) * 1000;
 
     const source = context.createMediaStreamSource(stream);
     const capture = new AudioWorkletNode(context, 'capture-processor', {
       numberOfInputs: 1,
       numberOfOutputs: 1,
       channelCount: 1,
-      processorOptions: { frameSamples: CAPTURE_FRAME_SAMPLES },
+      processorOptions: { frameSamples },
     });
-    const frameMs = (CAPTURE_FRAME_SAMPLES / context.sampleRate) * 1000;
     capture.port.onmessage = (event: MessageEvent<{ pcm: Int16Array; capturedAt: number }>) => {
       const { pcm, capturedAt } = event.data;
 
@@ -204,6 +215,26 @@ export class AudioEngine {
     output.gain.value = 1;
     output.connect(context.destination);
 
+    /*
+     * A meter on the speech output, tapped after the barge-in gain.
+     *
+     * This is a diagnostic, and it earns its place: everything upstream of the
+     * speaker already reports itself — frames arrive, spans decode, the transcript
+     * fills in — so when the assistant is inaudible, every indicator in the app is
+     * green and the only remaining suspects are outside it. Silence has too many
+     * causes to guess between: a muted output, a context the device would not run,
+     * a disconnected node, a system volume, the wrong output device.
+     *
+     * Reading the samples that actually reach the destination splits that in one
+     * glance. Moving meter and no sound is the machine's problem; still meter is
+     * ours. It is also the honest version of the barge-in claim — the level visibly
+     * drops to nothing the instant you speak.
+     */
+    const meter = context.createAnalyser();
+    meter.fftSize = 1024;
+    meter.smoothingTimeConstant = 0;
+    output.connect(meter);
+
     source.connect(capture);
     capture.connect(sink);
     sink.connect(context.destination);
@@ -215,7 +246,24 @@ export class AudioEngine {
     this.#capture = capture;
     this.#sink = sink;
     this.#output = output;
+    this.#meter = meter;
+    this.#meterFrame = new Float32Array(meter.fftSize);
     this.#nextStartAt = 0;
+  }
+
+  /**
+   * Peak amplitude currently reaching the speaker, 0–1.
+   *
+   * Sampled on demand rather than pushed, so a UI that stops looking costs nothing.
+   */
+  get outputLevel(): number {
+    const meter = this.#meter;
+    const frame = this.#meterFrame;
+    if (meter === undefined || frame === undefined) return 0;
+    meter.getFloatTimeDomainData(frame);
+    let peak = 0;
+    for (const sample of frame) peak = Math.max(peak, Math.abs(sample));
+    return peak;
   }
 
   /**
@@ -247,6 +295,27 @@ export class AudioEngine {
 
     const earliest = context.currentTime + JITTER_BUFFER_MS / 1000;
     const startAt = Math.max(this.#nextStartAt, earliest);
+
+    /*
+     * Re-assert audibility at the head of every run of audio.
+     *
+     * `flush()` drives this same gain to zero and schedules its own restore, so the
+     * two are writing to one param from different events. Automation is easy to get
+     * subtly wrong there — a cancel that lands between a ramp and its restore leaves
+     * the node at zero — and the failure mode is the worst one available: every
+     * later reply is synthesised, delivered, scheduled, and inaudible, with a full
+     * transcript on screen insisting it worked.
+     *
+     * So flush's restore is treated as an optimisation rather than a guarantee. This
+     * makes it structural: whatever automation ran before, the first frame after a
+     * gap is preceded by an unconditional gain of 1. `startAt` is at least a jitter
+     * buffer ahead of now, so this can never unmute audio a flush is still stopping.
+     */
+    if (this.#scheduled.length === 0) {
+      output.gain.cancelScheduledValues(startAt);
+      output.gain.setValueAtTime(1, startAt);
+    }
+
     source.start(startAt);
 
     const endsAt = startAt + buffer.duration;
@@ -309,6 +378,7 @@ export class AudioEngine {
     this.#capture?.disconnect();
     this.#sink?.disconnect();
     this.#output?.disconnect();
+    this.#meter?.disconnect();
     this.#earcons?.disconnect();
     this.#race.reset();
     this.#assistantActive = false;

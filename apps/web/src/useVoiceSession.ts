@@ -44,6 +44,13 @@ export interface SessionState {
   /** Measured barge-in: user onset → assistant audio silent. */
   bargeInMs: number | undefined;
   bargeIns: number;
+  /**
+   * Peak level reaching the speaker, 0–1.
+   *
+   * Shown because "the assistant is speaking" and "you can hear the assistant" are
+   * different claims, and until this existed the app could only make the first one.
+   */
+  outputLevel: number;
   connection: SocketStatus;
   /** What the server actually resolved — not necessarily what was requested. */
   selected: PipelineSelection | undefined;
@@ -72,6 +79,7 @@ const INITIAL: SessionState = {
   connectMs: undefined,
   bargeInMs: undefined,
   bargeIns: 0,
+  outputLevel: 0,
   connection: 'closed',
   selected: undefined,
   available: undefined,
@@ -379,6 +387,27 @@ export function useVoiceSession(): {
       cancelled = true;
     };
   }, []);
+
+  /*
+   * Poll the output meter on the display's own clock.
+   *
+   * A level is a continuous signal and React state is not, so this samples rather
+   * than subscribes: rAF is already the rate at which a bar could visibly change,
+   * and it parks itself when the tab is hidden. The `Math.round` is not cosmetic —
+   * without it every frame is a distinct float and the whole tree re-renders 60
+   * times a second for pixels nobody can tell apart.
+   */
+  useEffect(() => {
+    if (state.phase !== 'running') return;
+    let raf = 0;
+    const sample = (): void => {
+      const level = Math.round((engineRef.current?.outputLevel ?? 0) * 100) / 100;
+      setState((prev) => (prev.outputLevel === level ? prev : { ...prev, outputLevel: level }));
+      raf = requestAnimationFrame(sample);
+    };
+    raf = requestAnimationFrame(sample);
+    return () => cancelAnimationFrame(raf);
+  }, [state.phase]);
 
   useEffect(() => () => stop(), [stop]);
 

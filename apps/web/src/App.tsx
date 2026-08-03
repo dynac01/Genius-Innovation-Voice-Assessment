@@ -108,6 +108,42 @@ export function App() {
         </div>
       </section>
 
+      {/*
+        Output meter: the samples actually reaching the speaker.
+
+        Deliberately given real estate rather than a slot in the stats grid. Every
+        other indicator here reports something the app *did* — frames sent, frames
+        received, a turn state — and all of them read healthy while the assistant is
+        inaudible. This is the only one that reports what left the machine, which
+        makes it the one that separates "the app is broken" from "the sound is going
+        somewhere else". It doubles as the clearest view of a barge-in: the bar
+        collapses to nothing the moment you speak.
+      */}
+      <section className="meter" aria-label="Assistant output level">
+        <div className="meter-head">
+          <span>Speaker output</span>
+          <span className="meter-hint" data-testid="output-level">
+            {state.phase !== 'running'
+              ? 'idle'
+              : state.outputLevel > 0.01
+                ? 'sound is leaving the browser'
+                : 'silent'}
+          </span>
+        </div>
+        <div
+          className="meter-track"
+          role="meter"
+          aria-valuenow={Math.round(state.outputLevel * 100)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div
+            className="meter-fill"
+            style={{ width: `${Math.min(100, state.outputLevel * 140).toFixed(0)}%` }}
+          />
+        </div>
+      </section>
+
       <dl className="stats" data-testid="stats">
         <div>
           <dt>Phase</dt>
