@@ -4,11 +4,29 @@
 # host-specific — it is one container listening on one port — so moving to another
 # host is a config change, not a code change.
 
+# Must be globally unique across Fly, so this one is almost certainly taken.
+# `fly launch` will offer to rename it; accept, or set your own here first.
 app = "voice-conversation"
+
+# Pick the region nearest whoever is watching the demo. Every turn crosses the
+# Atlantic twice — browser to here, here to Deepgram and Anthropic — so a badly
+# chosen region shows up directly in the barge-in and response numbers.
 primary_region = "lhr"
 
 [build]
   dockerfile = "Dockerfile"
+
+# Which providers a session STARTS on. Not secrets — deliberately in the tracked
+# config, so what a deployment is configured to do is reviewable rather than
+# hidden in a dashboard. The keys themselves go in `fly secrets`.
+#
+# Note the coupling: asking here for a provider whose key is missing makes the
+# server refuse to boot rather than quietly serve fakes to real users. So set the
+# secrets *before* the first deploy, or the first deploy fails on purpose.
+[env]
+  STT_PROVIDER = "deepgram"
+  LLM_PROVIDER = "anthropic"
+  TTS_PROVIDER = "deepgram"
 
 [http_service]
   internal_port = 8787

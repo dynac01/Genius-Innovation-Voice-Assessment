@@ -331,15 +331,39 @@ Then open the forwarded port for 5173.
 One container serving the built app **and** the WebSocket from a single origin. That is not tidiness: a second origin makes the socket cross-origin and puts the demo one CORS or cookie policy away from failing on exactly the mobile browsers it most needs to work on. It also means one certificate and one URL.
 
 ```bash
-fly launch --no-deploy
-fly secrets set DEEPGRAM_API_KEY=... ANTHROPIC_API_KEY=... \
-                STT_PROVIDER=deepgram LLM_PROVIDER=anthropic TTS_PROVIDER=deepgram
+fly launch --no-deploy          # accept the rename — the app name must be globally unique
+fly secrets set DEEPGRAM_API_KEY=... ANTHROPIC_API_KEY=...
 fly deploy
 ```
 
-Nothing in the app is host-specific — it is one container listening on one port — so another host is a config change, not a code change. CI builds the image and smoke-tests that the container boots and serves the app.
+Secrets go in **before** the first deploy, not after. `fly.toml` asks for real
+providers, and asking for a provider whose key is missing makes the server refuse to
+boot rather than quietly serve fakes to real users — so deploying without them fails
+on purpose, with the reason in `fly logs`.
 
-> **Not yet deployed.** The deploy needs an account this build does not have. `Dockerfile`, `fly.toml`, and a passing container CI job are in the repo; the URL is not.
+Then check three things, in this order, because each one only means something if the
+previous passed:
+
+```bash
+curl https://<app>.fly.dev/health     # pipeline: all three "real"
+```
+
+Open the URL on a **phone**, not just a laptop — the criterion says mobile, and iOS
+Safari is the one browser nothing else predicts. You should get the microphone
+prompt on tapping *Start session*; **decline it once** to check the refusal reads
+properly, then allow it and run a turn.
+
+HTTPS is not decoration here: `getUserMedia` refuses to run outside a secure
+context, so over plain HTTP the demo does not merely look untidy — the microphone
+never opens. `force_https` is set for that reason.
+
+Nothing in the app is host-specific — one container, one port — so another host is a
+config change, not a code change. CI builds the image and smoke-tests that the
+container boots and serves the app.
+
+> **Not yet deployed.** The deploy needs an account this build does not have.
+> `Dockerfile`, `fly.toml`, and a passing container CI job are in the repo; the URL
+> is not.
 
 ---
 
