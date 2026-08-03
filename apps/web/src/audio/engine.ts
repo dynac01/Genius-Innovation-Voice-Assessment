@@ -91,6 +91,7 @@ export class AudioEngine {
   #nextStartAt = 0;
   readonly #vad = new Vad();
   readonly #race = new StartRace();
+  #assistantActive = false;
   #earcons: EarconPlayer | undefined;
   #lastBargeIn: BargeInMeasurement | undefined;
 
@@ -109,6 +110,19 @@ export class AudioEngine {
   /** True while assistant audio is scheduled at or ahead of the playhead. */
   get outputActive(): boolean {
     return this.bufferedAheadMs > 0;
+  }
+
+  /**
+   * The assistant has claimed the turn — it is thinking or speaking.
+   *
+   * Distinct from {@link outputActive}, and the distinction is the whole point.
+   * Waiting for audio means that speaking over the assistant *while it is still
+   * composing* does nothing at all: there is no audio scheduled, so nothing looks
+   * contended, and the reply arrives a second later as if you had never spoken.
+   * A turn is claimed the moment the assistant starts working on it.
+   */
+  setAssistantActive(active: boolean): void {
+    this.#assistantActive = active;
   }
 
   /**
@@ -148,16 +162,21 @@ export class AudioEngine {
 
       // Run the detector before forwarding. Barge-in is decided here, in the
       // browser, because the round trip alone would exhaust the latency budget.
-      const assistantScheduled = this.outputActive;
-      this.#vad.setOutputActive(assistantScheduled);
+      // Two different questions. The echo guard cares whether sound is actually
+      // coming out of the speaker; the turn race cares whether the assistant has
+      // claimed the turn at all. Only the first is about audio.
+      const audible = this.outputActive;
+      this.#vad.setOutputActive(audible);
       this.#vad.process(pcm, frameMs);
+
+      const assistantClaimsTurn = audible || this.#assistantActive;
 
       // Contention is a level, not an edge. Watching only for a rising edge on
       // user speech catches the assistant-first ordering and silently misses the
       // other one: a user who was already mid-sentence when the assistant started
       // produces no edge, so the assistant would talk straight over them. See
       // StartRace in @voice/core.
-      if (this.#race.observe(assistantScheduled, this.#vad.speaking) === 'yield') {
+      if (this.#race.observe(assistantClaimsTurn, this.#vad.speaking) === 'yield') {
         const silentAt = this.flush();
         this.#lastBargeIn = {
           detectToSilent: Math.max(0, (silentAt - capturedAt) * 1000),
@@ -285,6 +304,7 @@ export class AudioEngine {
     this.#output?.disconnect();
     this.#earcons?.disconnect();
     this.#race.reset();
+    this.#assistantActive = false;
     for (const track of this.#stream?.getTracks() ?? []) track.stop();
     await this.#context?.close();
 

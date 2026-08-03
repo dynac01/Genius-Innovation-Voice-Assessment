@@ -46,6 +46,13 @@ export default defineConfig({
           args: [
             '--use-fake-ui-for-media-stream',
             '--use-fake-device-for-media-stream',
+            // Silence, not Chromium's default tone. That tone is continuous, and
+            // a voice detector correctly reads continuous sound as someone
+            // talking without pause — so the assistant yields the turn on every
+            // reply and no audio ever reaches the browser. It also contradicts
+            // the scripted STT, which is asserting the user *finished* speaking.
+            // Silence is what makes the two fakes agree.
+            `--use-file-for-fake-audio-capture=${new URL('./tests/e2e/fixtures/quiet.wav', import.meta.url).pathname}`,
             '--autoplay-policy=no-user-gesture-required',
           ],
         },
@@ -58,6 +65,10 @@ export default defineConfig({
   webServer: [
     {
       command: 'pnpm --filter @voice/server start',
+      // Pinned, not inherited. Without this the suite silently uses whatever is in
+      // .env — so a machine with real keys runs the e2e against paid providers
+      // and a synthetic microphone, which cannot possibly transcribe.
+      env: { STT_PROVIDER: 'fake', LLM_PROVIDER: 'fake', TTS_PROVIDER: 'fake' },
       url: 'http://localhost:8787/health',
       reuseExistingServer: !isCI,
       timeout: 60_000,

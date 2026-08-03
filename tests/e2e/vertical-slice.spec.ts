@@ -38,11 +38,14 @@ test.describe('vertical slice round trip', () => {
       })
       .toBeGreaterThan(0);
 
-    // The pipeline ran: a final transcript, then a streamed reply.
-    await expect(page.getByTestId('user-text')).toHaveText('what is the weather today', {
+    // The pipeline ran: a final transcript, then a streamed reply — as two
+    // separate turns in a conversation, not one accumulating blob.
+    await expect(page.getByTestId('turn-user').last()).toContainText('what is the weather today', {
       timeout: 20_000,
     });
-    await expect(page.getByTestId('assistant-text')).toContainText('sunny', { timeout: 20_000 });
+    await expect(page.getByTestId('turn-assistant').last()).toContainText('sunny', {
+      timeout: 20_000,
+    });
 
     // Assistant audio came back down the socket and was handed to the audio graph.
     await expect
@@ -65,6 +68,32 @@ test.describe('vertical slice round trip', () => {
     await expect(page.getByTestId('last-earcon')).toHaveText('ready');
 
     expect(consoleErrors, 'page produced console errors').toEqual([]);
+  });
+
+  /**
+   * The failure this replaces: user and assistant text were two accumulating
+   * strings, so a second turn appended to the first and the transcript became one
+   * unreadable blob with no speaker or turn boundaries.
+   */
+  test('renders the exchange as separate, attributed turns', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('session-toggle').click();
+
+    await expect(page.getByTestId('turn-assistant').last()).toContainText('sunny', {
+      timeout: 25_000,
+    });
+
+    const turns = page.locator('[data-role]');
+    expect(await turns.count()).toBeGreaterThanOrEqual(2);
+
+    // Each turn carries its own speaker, and the user's comes first.
+    expect(await turns.first().getAttribute('data-role')).toBe('user');
+    expect(await turns.last().getAttribute('data-role')).toBe('assistant');
+
+    // The assistant's turn holds only its own reply, not the user's words too.
+    await expect(page.getByTestId('turn-assistant').last()).not.toContainText(
+      'what is the weather',
+    );
   });
 
   test('stopping the session releases the microphone', async ({ page }) => {

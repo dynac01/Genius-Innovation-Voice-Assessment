@@ -14,9 +14,32 @@ import type { TextSpan } from './audio.js';
 import type { EarconSound } from './protocol.js';
 import type { TurnState } from './turn.js';
 
+/**
+ * Which implementation each stage should use, chosen by the browser.
+ *
+ * Provider choice belongs to the session, not the process. Restarting the server
+ * to hear the difference makes the swap a deployment step; making it a message
+ * makes it a demonstration — which is what criterion 7 actually asks for.
+ *
+ * `silent` is TTS-only and exists for that demonstration specifically: the brief
+ * defines the swap as "once with a real provider and once with the silent fake".
+ */
+export interface PipelineSelection {
+  readonly stt: 'fake' | 'real';
+  readonly llm: 'fake' | 'real';
+  readonly tts: 'fake' | 'silent' | 'real';
+}
+
+/** Which stages *can* be real — i.e. have a key configured on the server. */
+export interface PipelineAvailability {
+  readonly stt: boolean;
+  readonly llm: boolean;
+  readonly tts: boolean;
+}
+
 /** Browser → server, as JSON text frames. */
 export type ClientEvent =
-  | { type: 'hello'; sampleRate: number }
+  | { type: 'hello'; sampleRate: number; providers?: PipelineSelection }
   | { type: 'start' }
   | { type: 'stop' }
   /** Local VAD fired. Audio is already stopping in the browser; this tells the loop. */
@@ -26,7 +49,18 @@ export type { TurnState };
 
 /** Server → browser, as JSON text frames. */
 export type ServerEvent =
-  | { type: 'ready'; sessionId: string }
+  /**
+   * `selected` is what the server actually resolved, which may differ from what
+   * was asked for: a stage whose key is missing falls back to its fake. Reporting
+   * the resolution rather than the request is what stops the UI claiming a
+   * provider that never loaded.
+   */
+  | {
+      type: 'ready';
+      sessionId: string;
+      available: PipelineAvailability;
+      selected: PipelineSelection;
+    }
   | { type: 'transcript'; text: string; final: boolean }
   | { type: 'assistant_text'; text: string }
   | { type: 'earcon'; sound: EarconSound }

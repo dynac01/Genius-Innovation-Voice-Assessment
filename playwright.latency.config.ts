@@ -41,6 +41,10 @@ export default defineConfig({
   webServer: [
     {
       command: 'pnpm --filter @voice/server start',
+      // Pinned to the fakes. The barge-in measurement is entirely client-side —
+      // detector to gain ramp — so the providers behind it are irrelevant to the
+      // number and would only add cost and variance.
+      env: { STT_PROVIDER: 'fake', LLM_PROVIDER: 'fake', TTS_PROVIDER: 'fake' },
       url: 'http://localhost:8787/health',
       reuseExistingServer: true,
       timeout: 60_000,

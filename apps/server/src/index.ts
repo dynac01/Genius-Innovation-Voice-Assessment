@@ -18,7 +18,12 @@ import type { RawData, WebSocket } from 'ws';
 
 import { fileURLToPath } from 'node:url';
 
-import { createPipeline, describePipeline } from './pipeline.js';
+import {
+  assertEnvIsCoherent,
+  createPipeline,
+  describePipeline,
+  providerAvailability,
+} from './pipeline.js';
 import { Session } from './session.js';
 import { createStaticSite } from './static.js';
 
@@ -44,6 +49,10 @@ function loadEnvFromAncestors(): void {
   }
 }
 loadEnvFromAncestors();
+
+// Before anything binds a port: a deployment that asked for real providers and
+// cannot have them should refuse to start, not serve fakes while looking healthy.
+assertEnvIsCoherent(process.env);
 
 const PORT = Number(process.env['PORT'] ?? 8787);
 const HOST = process.env['HOST'] ?? '0.0.0.0';
@@ -81,12 +90,12 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (socket: WebSocket) => {
   const sessionId = randomUUID().slice(0, 8);
   const clock = new SystemClock();
-  const { pipeline, dialog } = createPipeline(clock, process.env);
   const session = new Session({
     sessionId,
     clock,
-    pipeline,
-    dialog,
+    // Built when the browser says what it wants, not up front.
+    buildPipeline: (want) => createPipeline(clock, process.env, want),
+    available: providerAvailability(process.env),
     send: (payload) => {
       if (socket.readyState === socket.OPEN) socket.send(payload);
     },
@@ -133,11 +142,16 @@ function toArrayBuffer(data: RawData): ArrayBuffer {
 }
 
 server.listen(PORT, HOST, () => {
-  const pipeline = describePipeline(process.env);
+  const { default: def, available } = describePipeline(process.env) as {
+    default: Record<string, string>;
+    available: Record<string, boolean>;
+  };
   console.log(`[server] http://${HOST}:${PORT}  (health: /health, socket: /ws)`);
   console.log(
-    `[server] pipeline  stt=${pipeline['stt']}  llm=${pipeline['llm']}  tts=${pipeline['tts']}`,
+    `[server] default  stt=${def['stt']}  llm=${def['llm']}  tts=${def['tts']}` +
+      `   (real available: stt=${available['stt']} llm=${available['llm']} tts=${available['tts']})`,
   );
+  console.log('[server] the browser can change any of these per session');
   // Whether the browser app is being served from here is the difference between
   // production (one origin) and development (Vite proxies in front). Saying which
   // is cheaper than discovering it from a blank page.

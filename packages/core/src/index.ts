@@ -58,7 +58,13 @@ export { AudioBridge } from './bridge.js';
 export type { StubDialogOptions } from './stub-dialog.js';
 export { StubDialog } from './stub-dialog.js';
 
-export type { AudioFrame, ClientEvent, ServerEvent } from './wire.js';
+export type {
+  AudioFrame,
+  ClientEvent,
+  PipelineAvailability,
+  PipelineSelection,
+  ServerEvent,
+} from './wire.js';
 export {
   AUDIO_HEADER_BYTES,
   decodeAudioFrame,

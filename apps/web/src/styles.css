@@ -137,3 +137,122 @@ h2 {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   border-radius: 0 0.375rem 0.375rem 0;
 }
+
+/* ── Conversation ─────────────────────────────────────────────────────────── */
+
+.turns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.turn {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  /* Speaker turns need to be distinguishable at a glance, not by reading the
+     label — that is what makes a list a conversation rather than a log. */
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+.turn-assistant {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.turn .who {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.turn-assistant .who {
+  color: var(--accent);
+}
+
+.turn .said {
+  overflow-wrap: anywhere;
+}
+
+/* An in-progress turn: the text is still arriving. */
+.turn[data-pending='true'] .said {
+  opacity: 0.75;
+}
+
+.caret {
+  display: inline-block;
+  width: 0.45rem;
+  height: 1em;
+  margin-left: 0.15rem;
+  vertical-align: text-bottom;
+  background: currentColor;
+  opacity: 0.6;
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caret {
+    animation: none;
+  }
+}
+
+.cut {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 0.85em;
+}
+
+/* ── Pipeline controls ────────────────────────────────────────────────────── */
+
+.providers {
+  margin: 1.25rem 0;
+}
+
+.stage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.75rem;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.stage-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.stage select {
+  /* 2.75rem keeps the tap target usable on a phone. */
+  min-height: 2.75rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.stage-note {
+  font-size: 0.75rem;
+  color: var(--error);
+}

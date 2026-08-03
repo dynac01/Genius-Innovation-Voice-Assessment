@@ -22,9 +22,9 @@ Then open **http://localhost:5173** and click *Start session*. No API keys, no a
 
 ## What you'll see
 
-Worth setting expectations, because it looks broken otherwise: **with no keys, the transcript is scripted.** Whatever you say, the fake STT emits the same words on a timer.
+Worth setting expectations, because it looks broken otherwise: **on the fake speech-to-text, the transcript is scripted.** Whatever you say, it emits the same words on a timer.
 
-Your microphone *is* genuinely captured, encoded, and streamed — watch `Frames sent` climb. Only the transcription result is canned. Set `STT_PROVIDER=deepgram` and it transcribes you for real.
+Your microphone *is* genuinely captured, encoded, and streamed — watch `Frames sent` climb. Only the transcription result is canned. Switch **Speech-to-text** to Deepgram in the *Pipeline* controls and it transcribes you for real, from the same session, without restarting anything.
 
 **The part worth actually trying:** wait ~3s for the assistant to start, then talk over it. It stops instantly, `Barge-ins` ticks, and `Barge-in stop` shows the measured milliseconds. That number is real — read off the audio clock, not estimated.
 
@@ -150,7 +150,9 @@ One known, unfixed cost: **the first request of a process pays ~4 s of TLS and c
 
 ## Providers and keys
 
-Everything runs on fakes with **no keys at all**. Real providers are opt-in.
+**Switch providers from the UI**, per stage, while the app is running. Each stage has a dropdown; changing one restarts the session with the new pipeline. That is the criterion-7 demonstration in one click rather than a file edit and a server restart.
+
+Everything runs on fakes with **no keys at all**. Keys only decide what the UI is *allowed* to offer — a stage with no key shows its real option greyed out.
 
 ```bash
 cp .env.example .env      # then fill in the keys you want
@@ -163,22 +165,25 @@ cp .env.example .env      # then fill in the keys you want
 | TTS | Deepgram Aura-2 (streaming) | `ToneTts` (audible) / `SilentTts` |
 
 ```bash
-STT_PROVIDER=deepgram      # fake | deepgram
-LLM_PROVIDER=anthropic     # fake | anthropic
-TTS_PROVIDER=deepgram      # fake | fake-silent | deepgram
-
 DEEPGRAM_API_KEY=...       # one key covers STT and TTS
 ANTHROPIC_API_KEY=...
 ANTHROPIC_MODEL=claude-haiku-4-5
+
+# Optional: what a session *starts* as. The browser can change any of it.
+STT_PROVIDER=deepgram      # fake | deepgram
+LLM_PROVIDER=anthropic     # fake | anthropic
+TTS_PROVIDER=deepgram      # fake | fake-silent | deepgram
 ```
 
-The server prints what it actually resolved, and `/health` reports the same — a silently-wrong pipeline is worse than a loud failure:
+**The environment is the default, not the authority.** Two sources ask for providers and they are treated differently: a *browser* request is a user clicking a control, so an unavailable stage clamps to its fake and the UI shows what actually loaded. The *environment* is an operator stating intent at deploy time — asking for a provider whose key is missing **refuses to start**, because falling back silently is how a deployment serves fakes to real users while its health check stays green.
+
+The server prints its default and what it can offer, then logs each session's actual pipeline — a silently-wrong pipeline is worse than a loud failure:
 
 ```
-[server] pipeline  stt=deepgram  llm=anthropic  tts=deepgram
+[server] default  stt=real  llm=real  tts=real   (real available: stt=true llm=true tts=true)
+[server] the browser can change any of these per session
+[ws] [75a1295c] pipeline stt=fake llm=fake tts=real
 ```
-
-A missing key for a selected provider **fails at startup** rather than falling back to a fake and looking like a working demo.
 
 **Why Haiku 4.5:** a latency decision, not a cost one. In a voice loop, time-to-first-token *is* the product — you hear silence until the first clause reaches the synthesiser. Swap `ANTHROPIC_MODEL` for a larger Claude if replies feel thin; nothing else changes.
 

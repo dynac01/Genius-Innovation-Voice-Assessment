@@ -3,11 +3,13 @@ import type {
   BridgeEvent,
   ClientEvent,
   Clock,
-  Dialog,
-  Pipeline,
+  PipelineAvailability,
+  PipelineSelection,
   ServerEvent,
 } from '@voice/core';
 import { AsyncQueue, AudioBridge, encodeAudioFrame } from '@voice/core';
+
+import type { PipelineSetup } from './pipeline.js';
 
 /**
  * One browser connection's worth of state.
@@ -23,9 +25,14 @@ import { AsyncQueue, AudioBridge, encodeAudioFrame } from '@voice/core';
  */
 export interface SessionOptions {
   readonly sessionId: string;
-  readonly pipeline: Pipeline;
-  readonly dialog: Dialog;
   readonly clock: Clock;
+  /**
+   * Built per session rather than per process, because the browser chooses.
+   * Deferred until `hello` arrives so the choice can be honoured on the very
+   * first turn rather than the one after.
+   */
+  readonly buildPipeline: (want?: PipelineSelection) => PipelineSetup;
+  readonly available: PipelineAvailability;
   readonly send: (payload: string | ArrayBuffer) => void;
   readonly log?: (message: string) => void;
 }
@@ -33,7 +40,7 @@ export interface SessionOptions {
 export class Session {
   readonly #options: SessionOptions;
   readonly #mic = new AsyncQueue<AudioChunk>();
-  readonly #bridge: AudioBridge;
+  #bridge: AudioBridge | undefined;
   #running: Promise<void> | undefined;
   #outboundSeq = 0;
   #sampleRate = 16_000;
@@ -41,24 +48,41 @@ export class Session {
 
   constructor(options: SessionOptions) {
     this.#options = options;
+  }
+
+  #build(want?: PipelineSelection): PipelineSelection {
+    const setup = this.#options.buildPipeline(want);
     this.#bridge = new AudioBridge({
-      pipeline: options.pipeline,
-      dialog: options.dialog,
-      clock: options.clock,
+      pipeline: setup.pipeline,
+      dialog: setup.dialog,
+      clock: this.#options.clock,
+      endpointer: setup.endpointer,
       onEvent: (event) => this.#relay(event),
       onWarning: (message) => this.#log(message),
     });
+    return setup.selected;
   }
 
   handleEvent(event: ClientEvent): void {
     switch (event.type) {
-      case 'hello':
+      case 'hello': {
         // The browser reports whatever rate it actually got; we do not assume one.
         // Some browsers decline an explicit AudioContext rate, and resampling on the
         // way in would add artefacts to solve a problem the STT does not have.
         if (event.sampleRate > 0) this.#sampleRate = event.sampleRate;
-        this.#emit({ type: 'ready', sessionId: this.#options.sessionId });
+
+        const selected = this.#build(event.providers);
+        this.#log(`pipeline stt=${selected.stt} llm=${selected.llm} tts=${selected.tts}`);
+        // `selected`, not what was asked for: a stage whose key is missing falls
+        // back, and the UI must show what loaded rather than what was requested.
+        this.#emit({
+          type: 'ready',
+          sessionId: this.#options.sessionId,
+          available: this.#options.available,
+          selected,
+        });
         break;
+      }
       case 'start':
         this.#start();
         break;
@@ -70,7 +94,7 @@ export class Session {
         // This is the slow path: abandon generation and synthesis, and record what
         // the user actually heard so Phase 5 can resume from it.
         this.#log(`interrupt at t=${event.t}`);
-        this.#bridge.interrupt(event.t);
+        this.#bridge?.interrupt(event.t);
         break;
     }
   }
@@ -88,7 +112,7 @@ export class Session {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
-    this.#bridge.stop();
+    this.#bridge?.stop();
     this.#mic.close();
   }
 
@@ -99,7 +123,9 @@ export class Session {
 
   #start(): void {
     if (this.#running !== undefined) return;
-    this.#running = this.#bridge.run(this.#mic).catch((error: unknown) => {
+    // A `start` without a preceding `hello` still works, on the defaults.
+    if (this.#bridge === undefined) this.#build();
+    this.#running = this.#bridge!.run(this.#mic).catch((error: unknown) => {
       this.#fail(error);
     });
   }

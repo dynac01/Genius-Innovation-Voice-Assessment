@@ -1,4 +1,4 @@
-import type { TurnState } from '@voice/core';
+import type { PipelineAvailability, PipelineSelection, TurnState } from '@voice/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AudioEngine, MicrophoneError } from './audio/engine.js';
@@ -8,13 +8,31 @@ import type { SocketStatus } from './transport.js';
 
 export type SessionPhase = 'idle' | 'starting' | 'running' | 'error';
 
+/**
+ * One turn in the conversation.
+ *
+ * The previous shape was two strings — the latest user transcript, and every
+ * assistant reply ever concatenated together. Across more than one turn that is
+ * not a transcript, it is a blob: no speaker boundaries, no turn boundaries, and
+ * an assistant "message" that grows without end. A conversation is a list of
+ * turns, so the state is a list of turns.
+ */
+export interface Line {
+  readonly id: number;
+  readonly role: 'user' | 'assistant';
+  text: string;
+  /** Still being spoken or still being generated — rendered as in-progress. */
+  pending: boolean;
+  /** The reply was cut off. Shown, because a truncated answer is information. */
+  interrupted: boolean;
+}
+
 export interface SessionState {
   phase: SessionPhase;
   turn: TurnState;
   permission: MicPermission;
   error: string | undefined;
-  userText: string;
-  assistantText: string;
+  lines: Line[];
   lastEarcon: string | undefined;
   earconCount: number;
   sampleRate: number;
@@ -27,6 +45,10 @@ export interface SessionState {
   bargeInMs: number | undefined;
   bargeIns: number;
   connection: SocketStatus;
+  /** What the server actually resolved — not necessarily what was requested. */
+  selected: PipelineSelection | undefined;
+  /** Which stages the server has keys for. */
+  available: PipelineAvailability;
 }
 
 const INITIAL: SessionState = {
@@ -34,8 +56,7 @@ const INITIAL: SessionState = {
   turn: 'idle',
   permission: 'unknown',
   error: undefined,
-  userText: '',
-  assistantText: '',
+  lines: [],
   lastEarcon: undefined,
   earconCount: 0,
   sampleRate: 0,
@@ -46,6 +67,8 @@ const INITIAL: SessionState = {
   bargeInMs: undefined,
   bargeIns: 0,
   connection: 'closed',
+  selected: undefined,
+  available: { stt: false, llm: false, tts: false },
 };
 
 /**
@@ -55,18 +78,29 @@ const INITIAL: SessionState = {
  * no turn logic — the server drives state, the browser plays what arrives. Phases 3
  * and 4 add the parts that make it a conversation.
  */
+const DEFAULT_WANTED: PipelineSelection = { stt: 'fake', llm: 'fake', tts: 'fake' };
+
 export function useVoiceSession(): {
   state: SessionState;
+  wanted: PipelineSelection;
   start: () => void;
   stop: () => void;
+  choose: (stage: keyof PipelineSelection, value: string) => void;
 } {
   const [state, setState] = useState<SessionState>(INITIAL);
+  const [wanted, setWanted] = useState<PipelineSelection>(DEFAULT_WANTED);
+  const wantedRef = useRef(wanted);
+  wantedRef.current = wanted;
 
   const engineRef = useRef<AudioEngine | undefined>(undefined);
   const socketRef = useRef<VoiceSocket | undefined>(undefined);
   const seqRef = useRef(0);
   const finalAtRef = useRef<number | undefined>(undefined);
   const startingRef = useRef(false);
+  const lineIdRef = useRef(0);
+  // Set when the assistant begins a turn, so its first delta opens a new line
+  // instead of extending the previous reply.
+  const newAssistantLineRef = useRef(true);
 
   const stop = useCallback(() => {
     socketRef.current?.sendEvent({ type: 'stop' });
@@ -77,6 +111,8 @@ export function useVoiceSession(): {
     startingRef.current = false;
     seqRef.current = 0;
     finalAtRef.current = undefined;
+    lineIdRef.current = 0;
+    newAssistantLineRef.current = true;
     setState((prev) => ({ ...INITIAL, permission: prev.permission }));
   }, []);
 
@@ -97,24 +133,76 @@ export function useVoiceSession(): {
           ...prev,
           connectMs: Math.round(performance.now() - connectStartedAt),
         }));
-        socket.sendEvent({ type: 'hello', sampleRate: engine.sampleRate });
+        socket.sendEvent({
+          type: 'hello',
+          sampleRate: engine.sampleRate,
+          providers: wantedRef.current,
+        });
         socket.sendEvent({ type: 'start' });
       },
       onEvent: (event) => {
         switch (event.type) {
           case 'ready':
-            setState((prev) => ({ ...prev, phase: 'running' }));
+            setState((prev) => ({
+              ...prev,
+              phase: 'running',
+              available: event.available,
+              selected: event.selected,
+            }));
             break;
           case 'state':
+            if (event.state === 'thinking') newAssistantLineRef.current = true;
+            // The assistant claims the turn the moment it starts thinking, not
+            // when audio appears — otherwise talking over it mid-composition
+            // does nothing at all.
+            engine.setAssistantActive(event.state === 'thinking' || event.state === 'speaking');
             setState((prev) => ({ ...prev, turn: event.state }));
             break;
-          case 'transcript':
+
+          case 'transcript': {
             if (event.final) finalAtRef.current = performance.now();
-            setState((prev) => ({ ...prev, userText: event.text }));
+            setState((prev) => {
+              const lines = [...prev.lines];
+              const last = lines[lines.length - 1];
+              if (last?.role === 'user' && last.pending) {
+                lines[lines.length - 1] = { ...last, text: event.text, pending: !event.final };
+              } else {
+                lineIdRef.current += 1;
+                lines.push({
+                  id: lineIdRef.current,
+                  role: 'user',
+                  text: event.text,
+                  pending: !event.final,
+                  interrupted: false,
+                });
+              }
+              return { ...prev, lines };
+            });
             break;
-          case 'assistant_text':
-            setState((prev) => ({ ...prev, assistantText: prev.assistantText + event.text }));
+          }
+
+          case 'assistant_text': {
+            const startNew = newAssistantLineRef.current;
+            newAssistantLineRef.current = false;
+            setState((prev) => {
+              const lines = [...prev.lines];
+              const last = lines[lines.length - 1];
+              if (!startNew && last?.role === 'assistant') {
+                lines[lines.length - 1] = { ...last, text: last.text + event.text };
+              } else {
+                lineIdRef.current += 1;
+                lines.push({
+                  id: lineIdRef.current,
+                  role: 'assistant',
+                  text: event.text,
+                  pending: true,
+                  interrupted: false,
+                });
+              }
+              return { ...prev, lines };
+            });
             break;
+          }
           case 'earcon':
             engine.playEarcon(event.sound);
             setState((prev) => ({
@@ -125,6 +213,16 @@ export function useVoiceSession(): {
             break;
           case 'flush_audio':
             engine.flush();
+            // The reply was cut off mid-sentence; say so rather than leaving a
+            // truncated line that reads like the assistant simply stopped.
+            setState((prev) => {
+              const lines = [...prev.lines];
+              const last = lines[lines.length - 1];
+              if (last?.role === 'assistant' && last.pending) {
+                lines[lines.length - 1] = { ...last, pending: false, interrupted: true };
+              }
+              return { ...prev, lines };
+            });
             break;
           case 'error':
             setState((prev) => ({ ...prev, phase: 'error', error: event.message }));
@@ -192,7 +290,29 @@ export function useVoiceSession(): {
       });
   }, []);
 
+  /**
+   * Changing a stage restarts the session.
+   *
+   * The pipeline is assembled when a session opens, so a live swap means a new
+   * session — which is the honest thing anyway: criterion 7 is "run it once with
+   * a real provider and once with the fake", and a restart is what that *is*. One
+   * click rather than editing a file and restarting a server.
+   */
+  const choose = useCallback(
+    (stage: keyof PipelineSelection, value: string) => {
+      const next = { ...wantedRef.current, [stage]: value } as PipelineSelection;
+      setWanted(next);
+      wantedRef.current = next;
+      if (socketRef.current !== undefined) {
+        stop();
+        // After the teardown settles, so the new socket is not racing the old one.
+        setTimeout(() => start(), 120);
+      }
+    },
+    [start, stop],
+  );
+
   useEffect(() => () => stop(), [stop]);
 
-  return { state, start, stop };
+  return { state, wanted, start, stop, choose };
 }

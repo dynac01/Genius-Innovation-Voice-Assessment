@@ -1,4 +1,16 @@
-import type { AudioChunk, Clock, Dialog, LLM, Message, Pipeline, STT, TTS } from '@voice/core';
+import type {
+  AudioChunk,
+  Clock,
+  Dialog,
+  EndpointerConfig,
+  LLM,
+  Message,
+  Pipeline,
+  PipelineAvailability,
+  PipelineSelection,
+  STT,
+  TTS,
+} from '@voice/core';
 import { StubDialog, withIdleTimeout } from '@voice/core';
 import {
   AnthropicLlm,
@@ -72,83 +84,177 @@ const DEMO_SCRIPT = [
 
 const DEMO_REPLY = 'It is sunny and mild in Lisbon today, around twenty two degrees.';
 
-function required(env: Env, name: string, provider: string): string {
+const has = (env: Env, name: string): boolean => {
   const value = env[name];
-  if (value === undefined || value === '') {
+  return value !== undefined && value !== '';
+};
+
+/** Which stages can be real, i.e. have a key configured. */
+export function providerAvailability(env: Env): PipelineAvailability {
+  return {
+    stt: has(env, 'DEEPGRAM_API_KEY'),
+    llm: has(env, 'ANTHROPIC_API_KEY'),
+    tts: has(env, 'DEEPGRAM_API_KEY'),
+  };
+}
+
+/**
+ * The default selection, from the environment.
+ *
+ * `.env` still sets what a session *starts* as — useful for a deployment that
+ * should be real out of the box — but the browser can change it per session. The
+ * environment is the default, not the authority.
+ */
+export function defaultSelection(env: Env): PipelineSelection {
+  const real = (name: string, want: string) => (env[name] ?? 'fake') === want;
+  return {
+    stt: real('STT_PROVIDER', 'deepgram') ? 'real' : 'fake',
+    llm: real('LLM_PROVIDER', 'anthropic') ? 'real' : 'fake',
+    tts: real('TTS_PROVIDER', 'deepgram')
+      ? 'real'
+      : (env['TTS_PROVIDER'] ?? 'fake') === 'fake-silent'
+        ? 'silent'
+        : 'fake',
+  };
+}
+
+/**
+ * Validate the environment's own defaults, loudly.
+ *
+ * Two sources ask for providers and they deserve different treatment. A *browser*
+ * request is a user clicking a control, so an unavailable stage clamps to its fake
+ * and the resolution is reported back. The *environment* is an operator stating
+ * intent at deploy time, and silently ignoring that is how a deployment ends up
+ * serving fakes to real users while looking healthy. That one throws.
+ */
+export function assertEnvIsCoherent(env: Env): void {
+  const can = providerAvailability(env);
+  const want = defaultSelection(env);
+  const missing: string[] = [];
+  if (want.stt === 'real' && !can.stt) missing.push('STT_PROVIDER=deepgram needs DEEPGRAM_API_KEY');
+  if (want.llm === 'real' && !can.llm)
+    missing.push('LLM_PROVIDER=anthropic needs ANTHROPIC_API_KEY');
+  if (want.tts === 'real' && !can.tts) missing.push('TTS_PROVIDER=deepgram needs DEEPGRAM_API_KEY');
+  if (missing.length > 0) {
     throw new Error(
-      `${name} is required for ${provider}. Set it in .env, or unset the provider to use the fake.`,
+      `Incoherent provider configuration:\n  ${missing.join('\n  ')}\n` +
+        'Set the key, or select the fake. Falling back silently would serve fakes while looking healthy.',
     );
   }
-  return value;
 }
 
-function createStt(clock: Clock, env: Env): STT {
-  switch (env['STT_PROVIDER'] ?? 'fake') {
-    case 'deepgram':
-      // Deliberately unguarded — see IDLE_BUDGET_MS. A dead STT socket surfaces
-      // as a close or an error, both of which already propagate.
-      return new DeepgramStt({
-        apiKey: required(env, 'DEEPGRAM_API_KEY', 'STT_PROVIDER=deepgram'),
-      });
-    default:
-      return new ScriptedStt({ clock, script: DEMO_SCRIPT });
-  }
+/**
+ * Clamp a request to what the server can actually honour.
+ *
+ * A stage asked to be real without a key falls back to its fake rather than
+ * failing the session — and the resolution is reported back, so the UI shows what
+ * loaded rather than what was requested. Silently claiming a provider that never
+ * loaded is the failure worth avoiding here.
+ */
+export function resolveSelection(want: PipelineSelection, env: Env): PipelineSelection {
+  const can = providerAvailability(env);
+  return {
+    stt: want.stt === 'real' && can.stt ? 'real' : 'fake',
+    llm: want.llm === 'real' && can.llm ? 'real' : 'fake',
+    tts: want.tts === 'real' && can.tts ? 'real' : want.tts === 'silent' ? 'silent' : 'fake',
+  };
 }
 
-function createLlm(clock: Clock, env: Env): LLM {
-  switch (env['LLM_PROVIDER'] ?? 'fake') {
-    case 'anthropic': {
-      const model = env['ANTHROPIC_MODEL'];
-      return guardLlm(
-        new AnthropicLlm({
-          apiKey: required(env, 'ANTHROPIC_API_KEY', 'LLM_PROVIDER=anthropic'),
-          ...(model === undefined || model === '' ? {} : { model }),
-        }),
-        clock,
-        'anthropic-llm',
-      );
-    }
-    default:
-      return new CannedLlm({ clock, reply: DEMO_REPLY, ttftMs: 200, interTokenMs: 40 });
-  }
+function createStt(clock: Clock, env: Env, choice: PipelineSelection['stt']): STT {
+  // Deliberately unguarded — see IDLE_BUDGET_MS. A dead STT socket surfaces as a
+  // close or an error, both of which already propagate.
+  return choice === 'real'
+    ? new DeepgramStt({ apiKey: env['DEEPGRAM_API_KEY'] ?? '' })
+    : new ScriptedStt({ clock, script: DEMO_SCRIPT });
 }
 
-function createTts(clock: Clock, env: Env): TTS {
-  switch (env['TTS_PROVIDER'] ?? 'fake') {
-    case 'deepgram':
-      return guardTts(
-        new DeepgramTts({ apiKey: required(env, 'DEEPGRAM_API_KEY', 'TTS_PROVIDER=deepgram') }),
-        clock,
-        'deepgram-tts',
-      );
-    // The silent fake is the other half of the criterion-7 demonstration: the same
-    // loop run once against a real provider and once against a fake that emits
-    // nothing but correctly-shaped silence.
-    case 'fake-silent':
-      return new SilentTts({ clock, sampleRate: 24_000 });
-    default:
-      // Audible by default, so the demo can be checked by ear with no keys.
-      return new ToneTts({ clock, sampleRate: 24_000 });
+function createLlm(clock: Clock, env: Env, choice: PipelineSelection['llm']): LLM {
+  if (choice !== 'real') {
+    return new CannedLlm({ clock, reply: DEMO_REPLY, ttftMs: 200, interTokenMs: 40 });
   }
+  const model = env['ANTHROPIC_MODEL'];
+  return guardLlm(
+    new AnthropicLlm({
+      apiKey: env['ANTHROPIC_API_KEY'] ?? '',
+      ...(model === undefined || model === '' ? {} : { model }),
+    }),
+    clock,
+    'anthropic-llm',
+  );
+}
+
+function createTts(clock: Clock, env: Env, choice: PipelineSelection['tts']): TTS {
+  if (choice === 'real') {
+    return guardTts(
+      new DeepgramTts({ apiKey: env['DEEPGRAM_API_KEY'] ?? '' }),
+      clock,
+      'deepgram-tts',
+    );
+  }
+  // The silent fake is the other half of the criterion-7 demonstration: the same
+  // loop run once against a real provider and once against one that emits nothing
+  // but correctly-shaped silence.
+  if (choice === 'silent') return new SilentTts({ clock, sampleRate: 24_000 });
+  // Audible otherwise, so the demo can be checked by ear with no keys.
+  return new ToneTts({ clock, sampleRate: 24_000 });
+}
+
+/**
+ * End-of-turn tuning, which depends on what the STT means by "final".
+ *
+ * The fakes emit `final` only where a script deliberately says so, which is a
+ * statement that the speaker stopped — so it can be trusted. Deepgram emits
+ * `speech_final` on its own short silence timer, ~200ms, which is well inside an
+ * ordinary mid-sentence pause. Trusting *that* hands the end-of-turn decision to
+ * the provider and bypasses this endpointer entirely: the assistant starts
+ * answering while you are still mid-thought.
+ *
+ * So with a real provider the finals are treated as speech activity rather than a
+ * verdict, and the silence window here owns the decision. Deepgram's own ~200ms
+ * absorbs part of the wait, which is why the window is shorter than the 700ms
+ * default rather than stacked on top of it.
+ */
+function endpointerFor(choice: PipelineSelection['stt']): Partial<EndpointerConfig> {
+  return choice === 'real'
+    ? { trustSttFinal: false, endOfTurnMs: 550, pauseMs: 300 }
+    : { trustSttFinal: true };
+}
+
+export interface PipelineSetup {
+  readonly pipeline: Pipeline;
+  readonly dialog: Dialog;
+  readonly endpointer: Partial<EndpointerConfig>;
+  /** What was actually resolved, which may differ from what was requested. */
+  readonly selected: PipelineSelection;
 }
 
 export function createPipeline(
   clock: Clock,
   env: Env = {},
-): { pipeline: Pipeline; dialog: Dialog } {
-  const llm = createLlm(clock, env);
-  const pipeline: Pipeline = { stt: createStt(clock, env), llm, tts: createTts(clock, env) };
+  want?: PipelineSelection,
+): PipelineSetup {
+  const selected = resolveSelection(want ?? defaultSelection(env), env);
+  const llm = createLlm(clock, env, selected.llm);
+  const pipeline: Pipeline = {
+    stt: createStt(clock, env, selected.stt),
+    llm,
+    tts: createTts(clock, env, selected.tts),
+  };
 
   // The model sits behind the dialog, not inside the bridge. A more capable
   // decision engine replaces this line and nothing else.
-  return { pipeline, dialog: new StubDialog({ llm }) };
+  return {
+    pipeline,
+    dialog: new StubDialog({ llm }),
+    endpointer: endpointerFor(selected.stt),
+    selected,
+  };
 }
 
-/** What is actually wired up — for the startup banner and `/health`. */
-export function describePipeline(env: Env = {}): Record<string, string> {
+/** What the server would start with — for the banner and `/health`. */
+export function describePipeline(env: Env = {}): Record<string, unknown> {
   return {
-    stt: env['STT_PROVIDER'] ?? 'fake',
-    llm: env['LLM_PROVIDER'] ?? 'fake',
-    tts: env['TTS_PROVIDER'] ?? 'fake',
+    default: resolveSelection(defaultSelection(env), env),
+    available: providerAvailability(env),
   };
 }

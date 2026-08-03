@@ -67,6 +67,10 @@ describe('audio frame codec', () => {
 describe('event guards', () => {
   it.each([
     [{ type: 'hello', sampleRate: 16000 }, true],
+    [
+      { type: 'hello', sampleRate: 16000, providers: { stt: 'real', llm: 'fake', tts: 'silent' } },
+      true,
+    ],
     [{ type: 'start' }, true],
     [{ type: 'interrupt', t: 12 }, true],
     [{ type: 'ready' }, false],
@@ -79,6 +83,15 @@ describe('event guards', () => {
 
   it.each([
     [{ type: 'ready', sessionId: 'a' }, true],
+    [
+      {
+        type: 'ready',
+        sessionId: 'a',
+        available: { stt: true, llm: true, tts: false },
+        selected: { stt: 'real', llm: 'real', tts: 'fake' },
+      },
+      true,
+    ],
     [{ type: 'transcript', text: 'hi', final: false }, true],
     [{ type: 'flush_audio' }, true],
     [{ type: 'start' }, false],

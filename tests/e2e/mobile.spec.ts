@@ -61,7 +61,7 @@ test.describe('mobile layout', () => {
 
     await expect(page.getByTestId('phase')).toHaveText('running', { timeout: 20_000 });
     await expect(page.getByTestId('connection')).toHaveText('open');
-    await expect(page.getByTestId('user-text')).toHaveText('what is the weather today', {
+    await expect(page.getByTestId('turn-user').last()).toContainText('what is the weather today', {
       timeout: 25_000,
     });
     await expect

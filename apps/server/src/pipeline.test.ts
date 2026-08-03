@@ -10,7 +10,12 @@ import {
   SystemClock,
   ToneTts,
 } from '@voice/providers';
-import { createPipeline, describePipeline } from './pipeline.js';
+import {
+  assertEnvIsCoherent,
+  createPipeline,
+  describePipeline,
+  providerAvailability,
+} from './pipeline.js';
 
 const clock = new SystemClock();
 const KEYS = { DEEPGRAM_API_KEY: 'dg-test-key', ANTHROPIC_API_KEY: 'sk-ant-test-key' };
@@ -80,21 +85,68 @@ describe('pipeline selection', () => {
   });
 
   /**
-   * A missing key must fail at startup. Falling back to a fake would look like a
-   * working demo that quietly ignores the provider you asked for.
+   * Two sources, two treatments. The environment is an operator stating intent at
+   * deploy time — silently ignoring it is how a deployment serves fakes to real
+   * users while its health check stays green. That fails at startup.
    */
   it.each([
     ['STT_PROVIDER', 'deepgram', 'DEEPGRAM_API_KEY'],
     ['TTS_PROVIDER', 'deepgram', 'DEEPGRAM_API_KEY'],
     ['LLM_PROVIDER', 'anthropic', 'ANTHROPIC_API_KEY'],
-  ])('fails loudly when %s=%s has no %s', (variable, value, key) => {
-    expect(() => createPipeline(clock, { [variable]: value })).toThrow(key);
+  ])('refuses to start when %s=%s has no %s', (variable, value, key) => {
+    expect(() => assertEnvIsCoherent({ [variable]: value })).toThrow(key);
   });
 
   it('treats an empty key as missing', () => {
-    expect(() => createPipeline(clock, { STT_PROVIDER: 'deepgram', DEEPGRAM_API_KEY: '' })).toThrow(
-      /required/,
+    expect(() => assertEnvIsCoherent({ STT_PROVIDER: 'deepgram', DEEPGRAM_API_KEY: '' })).toThrow(
+      /DEEPGRAM_API_KEY/,
     );
+  });
+
+  it('starts happily when the environment is coherent', () => {
+    expect(() => assertEnvIsCoherent({})).not.toThrow();
+    expect(() => assertEnvIsCoherent({ ...KEYS, STT_PROVIDER: 'deepgram' })).not.toThrow();
+  });
+
+  /**
+   * A browser request is a user clicking a control. An unavailable stage clamps
+   * to its fake and the resolution is reported back, so the UI shows what loaded
+   * rather than what was asked for.
+   */
+  describe('browser requests', () => {
+    it('honours a request the server can serve', () => {
+      const { selected } = createPipeline(clock, KEYS, { stt: 'real', llm: 'real', tts: 'real' });
+      expect(selected).toEqual({ stt: 'real', llm: 'real', tts: 'real' });
+    });
+
+    it('clamps a stage with no key rather than failing the session', () => {
+      const { selected } = createPipeline(clock, {}, { stt: 'real', llm: 'real', tts: 'real' });
+      expect(selected).toEqual({ stt: 'fake', llm: 'fake', tts: 'fake' });
+    });
+
+    it('clamps only the stage that is unavailable', () => {
+      const { selected } = createPipeline(
+        clock,
+        { ANTHROPIC_API_KEY: 'sk-ant-test' },
+        { stt: 'real', llm: 'real', tts: 'real' },
+      );
+      expect(selected).toEqual({ stt: 'fake', llm: 'real', tts: 'fake' });
+    });
+
+    it('keeps the silent TTS available with no keys at all — the criterion-7 swap', () => {
+      const { selected, pipeline } = createPipeline(
+        clock,
+        {},
+        { stt: 'fake', llm: 'fake', tts: 'silent' },
+      );
+      expect(selected.tts).toBe('silent');
+      expect(pipeline.tts).toBeInstanceOf(SilentTts);
+    });
+
+    it('reports availability so the UI can disable what it cannot offer', () => {
+      expect(providerAvailability({})).toEqual({ stt: false, llm: false, tts: false });
+      expect(providerAvailability(KEYS)).toEqual({ stt: true, llm: true, tts: true });
+    });
   });
 
   /**
@@ -117,8 +169,14 @@ describe('pipeline selection', () => {
     expect(guarded.tts).not.toBeInstanceOf(DeepgramTts);
   });
 
-  it('reports what is wired up', () => {
-    expect(describePipeline({})).toEqual({ stt: 'fake', llm: 'fake', tts: 'fake' });
-    expect(describePipeline({ STT_PROVIDER: 'deepgram' })).toMatchObject({ stt: 'deepgram' });
+  it('reports the default and what is available', () => {
+    expect(describePipeline({})).toEqual({
+      default: { stt: 'fake', llm: 'fake', tts: 'fake' },
+      available: { stt: false, llm: false, tts: false },
+    });
+    expect(describePipeline({ ...KEYS, STT_PROVIDER: 'deepgram' })).toEqual({
+      default: { stt: 'real', llm: 'fake', tts: 'fake' },
+      available: { stt: true, llm: true, tts: true },
+    });
   });
 });

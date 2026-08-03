@@ -7,8 +7,14 @@ import { useVoiceSession } from './useVoiceSession.js';
  * verified by hand on a real device: microphone in, WebSocket out, fake pipeline,
  * audio back. The conversational UI arrives with the loop in Phase 3.
  */
+const STAGES = [
+  { key: 'stt', label: 'Speech-to-text', real: 'Deepgram Nova-3', fake: 'Scripted' },
+  { key: 'llm', label: 'Model', real: 'Claude Haiku 4.5', fake: 'Canned' },
+  { key: 'tts', label: 'Text-to-speech', real: 'Deepgram Aura-2', fake: 'Tone' },
+] as const;
+
 export function App() {
-  const { state, start, stop } = useVoiceSession();
+  const { state, wanted, start, stop, choose } = useVoiceSession();
 
   const secureContext = window.isSecureContext;
   const hasMediaDevices = typeof navigator.mediaDevices?.getUserMedia === 'function';
@@ -62,6 +68,44 @@ export function App() {
         </p>
       )}
 
+      {/*
+        Provider choice lives here rather than in .env because swapping one is a
+        thing to *demonstrate*, not a thing to redeploy. Changing a stage restarts
+        the session — the pipeline is assembled when a session opens.
+      */}
+      <section className="providers" aria-label="Pipeline">
+        <h2>Pipeline</h2>
+        <div className="stage-grid">
+          {STAGES.map((stage) => {
+            const canBeReal = state.available[stage.key];
+            const active = state.selected?.[stage.key];
+            return (
+              <label key={stage.key} className="stage">
+                <span className="stage-label">{stage.label}</span>
+                <select
+                  data-testid={`provider-${stage.key}`}
+                  value={wanted[stage.key]}
+                  onChange={(e) => choose(stage.key, e.target.value)}
+                >
+                  <option value="fake">{stage.fake} (fake)</option>
+                  {stage.key === 'tts' && <option value="silent">Silent (fake)</option>}
+                  <option value="real" disabled={!canBeReal}>
+                    {stage.real}
+                    {canBeReal ? '' : ' — no key'}
+                  </option>
+                </select>
+                {/* What loaded, not what was asked for. */}
+                {active !== undefined && active !== wanted[stage.key] && (
+                  <span className="stage-note" data-testid={`provider-${stage.key}-actual`}>
+                    running as {active}
+                  </span>
+                )}
+              </label>
+            );
+          })}
+        </div>
+      </section>
+
       <dl className="stats" data-testid="stats">
         <div>
           <dt>Phase</dt>
@@ -113,16 +157,35 @@ export function App() {
         </div>
       </dl>
 
-      <section className="transcript">
-        <h2>Transcript</h2>
-        <p className="line">
-          <span className="who">You</span>
-          <span data-testid="user-text">{state.userText || '…'}</span>
-        </p>
-        <p className="line">
-          <span className="who">Assistant</span>
-          <span data-testid="assistant-text">{state.assistantText || '…'}</span>
-        </p>
+      <section className="transcript" aria-label="Conversation">
+        <h2>Conversation</h2>
+
+        {state.lines.length === 0 ? (
+          <p className="muted small" data-testid="transcript-empty">
+            {state.phase === 'running' ? 'Listening…' : 'Start a session and say something.'}
+          </p>
+        ) : (
+          <ol className="turns" data-testid="transcript">
+            {state.lines.map((line) => (
+              <li
+                key={line.id}
+                className={`turn turn-${line.role}`}
+                data-testid={`turn-${line.role}`}
+                data-role={line.role}
+                data-pending={line.pending}
+                data-interrupted={line.interrupted}
+              >
+                <span className="who">{line.role === 'user' ? 'You' : 'Assistant'}</span>
+                <span className="said">
+                  {line.text}
+                  {line.pending && <span className="caret" aria-hidden="true" />}
+                  {line.interrupted && <span className="cut"> — interrupted</span>}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+
         <p className="muted small">
           Last earcon: <span data-testid="last-earcon">{state.lastEarcon ?? '—'}</span> (
           <span data-testid="earcon-count">{state.earconCount}</span> played)
