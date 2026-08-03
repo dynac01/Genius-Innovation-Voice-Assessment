@@ -12,9 +12,7 @@
 
 import type { TextSpan } from './audio.js';
 import type { EarconSound } from './protocol.js';
-
-/** Where the loop is in a turn. The state machine that drives it lands in Phase 3. */
-export type TurnState = 'idle' | 'listening' | 'thinking' | 'speaking';
+import type { TurnState } from './turn.js';
 
 /** Browser → server, as JSON text frames. */
 export type ClientEvent =
@@ -23,6 +21,8 @@ export type ClientEvent =
   | { type: 'stop' }
   /** Local VAD fired. Audio is already stopping in the browser; this tells the loop. */
   | { type: 'interrupt'; t: number };
+
+export type { TurnState };
 
 /** Server → browser, as JSON text frames. */
 export type ServerEvent =

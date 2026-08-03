@@ -1,21 +1,21 @@
-import type { AudioChunk, ClientEvent, Pipeline, ServerEvent } from '@voice/core';
-import { AsyncQueue, encodeAudioFrame } from '@voice/core';
+import type { AudioChunk, ClientEvent, Clock, LoopEvent, Pipeline, ServerEvent } from '@voice/core';
+import { AsyncQueue, VoiceLoop, encodeAudioFrame } from '@voice/core';
 
 /**
  * One browser connection's worth of state.
  *
- * Phase 2 deliberately: a straight-line pass-through, not the loop. Microphone
- * audio goes to STT, a final transcript goes to the model, the reply goes to TTS,
- * and the audio comes back. No turn state machine, no endpointing, no barge-in —
- * those are Phases 3 and 4. The job here is to prove bytes survive the round trip.
+ * Deliberately thin: it owns the socket's framing and nothing else. All the
+ * behaviour — turn-taking, endpointing, streaming the model into the synthesiser —
+ * lives in `VoiceLoop` inside @voice/core, where it is driven by fakes in virtual
+ * time. This file is the adapter that turns loop events into wire events.
  *
- * `send` is injected rather than a socket being passed in, so the session is
- * testable without opening a port and the transport can be swapped without
- * touching this file.
+ * `send` is injected rather than a socket being passed in, so a session is testable
+ * without opening a port and the transport can change without touching this file.
  */
 export interface SessionOptions {
   readonly sessionId: string;
   readonly pipeline: Pipeline;
+  readonly clock: Clock;
   readonly send: (payload: string | ArrayBuffer) => void;
   readonly log?: (message: string) => void;
 }
@@ -23,17 +23,29 @@ export interface SessionOptions {
 export class Session {
   readonly #options: SessionOptions;
   readonly #mic = new AsyncQueue<AudioChunk>();
+  readonly #loop: VoiceLoop;
   #running: Promise<void> | undefined;
   #outboundSeq = 0;
+  #sampleRate = 16_000;
   #closed = false;
 
   constructor(options: SessionOptions) {
     this.#options = options;
+    this.#loop = new VoiceLoop({
+      pipeline: options.pipeline,
+      clock: options.clock,
+      onEvent: (event) => this.#relay(event),
+      onWarning: (message) => this.#log(message),
+    });
   }
 
   handleEvent(event: ClientEvent): void {
     switch (event.type) {
       case 'hello':
+        // The browser reports whatever rate it actually got; we do not assume one.
+        // Some browsers decline an explicit AudioContext rate, and resampling on the
+        // way in would add artefacts to solve a problem the STT does not have.
+        if (event.sampleRate > 0) this.#sampleRate = event.sampleRate;
         this.#emit({ type: 'ready', sessionId: this.#options.sessionId });
         break;
       case 'start':
@@ -43,18 +55,19 @@ export class Session {
         this.close();
         break;
       case 'interrupt':
-        // Phase 4 acts on this. Recording it now keeps the wire contract honest:
-        // the browser has already stopped its own audio locally by this point.
+        // Phase 4 acts on this. The browser has already silenced its own output by
+        // the time this arrives — the round trip decides what the interruption
+        // *meant*, never whether to stop.
         this.#log(`interrupt at t=${event.t}`);
         break;
     }
   }
 
   /** A microphone frame arrived. Push it and return — never block the socket. */
-  handleAudio(chunk: AudioChunk): void {
+  handleAudio(pcm: Int16Array): void {
     if (this.#closed) return;
     try {
-      this.#mic.push(chunk);
+      this.#mic.push({ pcm, sampleRate: this.#sampleRate });
     } catch (error) {
       this.#fail(error);
     }
@@ -63,55 +76,48 @@ export class Session {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#loop.stop();
     this.#mic.close();
   }
 
-  /** Resolves once the pipeline has finished. Used by tests and shutdown. */
+  /** Resolves once the loop has finished. Used by tests and shutdown. */
   get finished(): Promise<void> {
     return this.#running ?? Promise.resolve();
   }
 
   #start(): void {
     if (this.#running !== undefined) return;
-    this.#emit({ type: 'state', state: 'listening' });
-    this.#emit({ type: 'earcon', sound: 'listening' });
-    this.#running = this.#run().catch((error: unknown) => {
+    this.#running = this.#loop.run(this.#mic).catch((error: unknown) => {
       this.#fail(error);
     });
   }
 
-  async #run(): Promise<void> {
-    const { pipeline } = this.#options;
-
-    let finalText = '';
-    for await (const result of pipeline.stt.transcribeStream(this.#mic)) {
-      this.#emit({ type: 'transcript', text: result.text, final: result.final });
-      if (result.final) {
-        finalText = result.text;
+  #relay(event: LoopEvent): void {
+    switch (event.type) {
+      case 'audio':
+        this.#sendAudio(event.chunk);
         break;
-      }
+      case 'pause_detected':
+        // Becomes a `pause_detected` on the bridge protocol once the dialog layer
+        // lands in Phase 5. The browser has no use for it.
+        this.#log(`pause at t=${event.at}`);
+        break;
+      case 'state':
+        this.#emit({ type: 'state', state: event.state });
+        break;
+      case 'transcript':
+        this.#emit({ type: 'transcript', text: event.text, final: event.final });
+        break;
+      case 'assistant_text':
+        this.#emit({ type: 'assistant_text', text: event.text });
+        break;
+      case 'earcon':
+        this.#emit({ type: 'earcon', sound: event.sound });
+        break;
+      case 'error':
+        this.#emit({ type: 'error', message: event.message });
+        break;
     }
-    if (this.#closed || finalText === '') return;
-
-    this.#emit({ type: 'state', state: 'thinking' });
-    this.#emit({ type: 'earcon', sound: 'accepted' });
-
-    let reply = '';
-    for await (const delta of pipeline.llm.respond([{ role: 'user', content: finalText }])) {
-      reply += delta.text;
-      this.#emit({ type: 'assistant_text', text: delta.text });
-    }
-    if (this.#closed) return;
-
-    this.#emit({ type: 'state', state: 'speaking' });
-    this.#emit({ type: 'earcon', sound: 'ready' });
-
-    for await (const chunk of pipeline.tts.synthesizeStream(reply)) {
-      if (this.#closed) return;
-      this.#sendAudio(chunk);
-    }
-
-    this.#emit({ type: 'state', state: 'idle' });
   }
 
   #sendAudio(chunk: AudioChunk): void {
@@ -132,7 +138,7 @@ export class Session {
     const message = error instanceof Error ? error.message : String(error);
     this.#log(`session failed: ${message}`);
     // Surface rather than hang. "No silent failures" is an evaluation line, and a
-    // provider hiccup must reach the user as a failed earcon, not as a dead socket.
+    // provider hiccup must reach the user as a failed earcon, not a dead socket.
     this.#options.send(JSON.stringify({ type: 'earcon', sound: 'failed' } satisfies ServerEvent));
     this.#options.send(JSON.stringify({ type: 'error', message } satisfies ServerEvent));
     this.close();

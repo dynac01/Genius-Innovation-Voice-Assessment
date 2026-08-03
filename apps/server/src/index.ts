@@ -34,9 +34,11 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 
 wss.on('connection', (socket: WebSocket) => {
   const sessionId = randomUUID().slice(0, 8);
+  const clock = new SystemClock();
   const session = new Session({
     sessionId,
-    pipeline: createPipeline(new SystemClock(), process.env),
+    clock,
+    pipeline: createPipeline(clock, process.env),
     send: (payload) => {
       if (socket.readyState === socket.OPEN) socket.send(payload);
     },
@@ -48,8 +50,7 @@ wss.on('connection', (socket: WebSocket) => {
   socket.on('message', (data: RawData, isBinary: boolean) => {
     try {
       if (isBinary) {
-        const frame = decodeAudioFrame(toArrayBuffer(data));
-        session.handleAudio({ pcm: frame.pcm, sampleRate: 0 });
+        session.handleAudio(decodeAudioFrame(toArrayBuffer(data)).pcm);
         return;
       }
       const parsed: unknown = JSON.parse(data.toString());

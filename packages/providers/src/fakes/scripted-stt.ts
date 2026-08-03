@@ -56,6 +56,13 @@ export class ScriptedStt implements STT {
         await this.#clock.sleep(step.afterMs);
         yield { text: step.text, final: step.final };
       }
+
+      // Stay open past the end of the script, until the microphone itself ends.
+      // A real streaming STT holds its connection for the whole session; a fake that
+      // closed after its last result would end the loop's input stream the instant
+      // the user stopped talking — taking the silence-based endpointer with it, and
+      // making criterion 4 untestable for the wrong reason.
+      await draining;
     } finally {
       listening = false;
     }

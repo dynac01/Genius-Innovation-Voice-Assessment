@@ -28,7 +28,19 @@ export { VirtualClock } from './clock.js';
 
 export { AsyncQueue } from './async-queue.js';
 
-export type { AudioFrame, ClientEvent, ServerEvent, TurnState } from './wire.js';
+export type { TurnEvent, TurnState } from './turn.js';
+export { TurnMachine, accepts, transition } from './turn.js';
+
+export type { EndpointerConfig, EndpointerInput, EndpointerOutcome } from './endpointer.js';
+export { DEFAULT_ENDPOINTER, Endpointer } from './endpointer.js';
+
+export type { ChunkerConfig } from './chunker.js';
+export { ClauseChunker, DEFAULT_CHUNKER } from './chunker.js';
+
+export type { LoopEvent, VoiceLoopOptions } from './loop.js';
+export { VoiceLoop } from './loop.js';
+
+export type { AudioFrame, ClientEvent, ServerEvent } from './wire.js';
 export {
   AUDIO_HEADER_BYTES,
   decodeAudioFrame,
