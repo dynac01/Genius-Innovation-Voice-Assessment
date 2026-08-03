@@ -1,6 +1,6 @@
 # Voice Conversation — Ordered Work Plan
 
-**Status:** Phases 0–7 complete. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
+**Status:** Phases 0–8 complete. All eight success criteria have passing tests. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [TESTING.md](TESTING.md)
 
@@ -316,18 +316,45 @@ stable clause — the exact failure criterion 4 exists to catch.
 
 **Goal:** criterion 8, plus everything that makes a live demo not embarrassing.
 
-- [ ] Sustained silence produces no spurious response
-- [ ] Simultaneous start — deterministic tiebreak, no deadlock, no talking over each other
+- [x] Sustained silence produces no spurious response
+- [x] Simultaneous start — deterministic tiebreak, no deadlock, no talking over each other
       ([DESIGN.md §4.5](DESIGN.md#45-simultaneous-start-criterion-8))
-- [ ] Provider hiccup mid-reply → `failed` earcon and clean recovery, never a hang
-- [ ] Timeouts on every provider call
-- [ ] WebSocket disconnect / reconnect handling
-- [ ] No silent failures anywhere — every error path surfaces to the user
-- [ ] **Unit:** simultaneous-start tiebreak — deterministic for every ordering
-- [ ] **Feature:** all three awkward cases **(criterion 8)**
+- [x] Provider hiccup mid-reply → `failed` earcon and clean recovery, never a hang
+- [x] Timeouts on every provider call
+- [ ] WebSocket disconnect / reconnect handling — *deferred to Phase 9, with deploy*
+- [x] No silent failures anywhere — every error path surfaces to the user
+- [x] **Unit:** simultaneous-start tiebreak — deterministic for every ordering
+- [x] **Feature:** all three awkward cases **(criterion 8)**
 
 **Done when:** all three awkward cases are covered by tests and behave correctly when triggered
 by hand.
+
+**Simultaneous start** turned out to be two orderings, not one, and the second is the one an
+edge-triggered detector silently misses:
+
+| Ordering | What happens | Caught by |
+|---|---|---|
+| Assistant speaking, user starts | Rising edge on user speech | edge detection — ordinary barge-in |
+| User already speaking, assistant starts | **No edge at all** — the detector latched before the assistant existed | level detection |
+
+So contention is treated as a **level**: the instant both parties claim the turn, whichever way
+round they got there, the assistant yields. `StartRace` in `@voice/core` is pure, fires once per
+contest (re-yielding every 20ms would stop the assistant ever recovering), and is tested
+exhaustively over every three-frame ordering. Deadlock is impossible by construction — yielding
+is unilateral, so there is no state where each side waits for the other.
+
+**Provider stalls** are the half of "a provider hiccup" with no error attached: the socket stays
+open, nothing throws, and the loop waits forever. `withIdleTimeout` measures the gap *between*
+items rather than total duration — a long reply is not a stall, and a wall-clock budget would
+kill healthy answers while still missing a provider trickling one byte a minute. Applied to the
+real providers only; the fakes are deterministic and a budget there just adds a way for slow CI
+to fail.
+
+**A note on what the protocol cannot carry.** A failed provider reaches the user as a `failed`
+earcon and the operator as a named log line — `ToBridge` is `say` / `earcon` / `barge_in` and
+nothing else, so a dialog has no channel to explain *why*. That is a real constraint rather than
+an oversight, and the split is the right one anyway: the user needs "something went wrong", the
+operator needs "llm sent nothing for 500ms".
 
 ---
 

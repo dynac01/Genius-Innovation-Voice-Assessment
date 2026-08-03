@@ -17,6 +17,14 @@ export interface CannedLlmOptions {
    * easier case.
    */
   readonly failAfterTokens?: number;
+  /**
+   * Go silent after this many tokens, without erroring.
+   *
+   * The nastier half of "a provider hiccup mid-reply": the socket stays open, no
+   * error is raised, and a loop with no idle budget waits forever. From the user's
+   * side that is indistinguishable from the assistant having nothing to say.
+   */
+  readonly stallAfterTokens?: number;
 }
 
 /** What one `respond` call was asked, and how far it got. */
@@ -52,6 +60,7 @@ export class CannedLlm implements LLM {
   readonly #ttftMs: number;
   readonly #interTokenMs: number;
   readonly #failAfterTokens: number | undefined;
+  readonly #stallAfterTokens: number | undefined;
 
   constructor(options: CannedLlmOptions) {
     this.#clock = options.clock;
@@ -59,6 +68,7 @@ export class CannedLlm implements LLM {
     this.#ttftMs = options.ttftMs ?? 120;
     this.#interTokenMs = options.interTokenMs ?? 20;
     this.#failAfterTokens = options.failAfterTokens;
+    this.#stallAfterTokens = options.stallAfterTokens;
   }
 
   get lastCall(): LlmCall | undefined {
@@ -80,6 +90,9 @@ export class CannedLlm implements LLM {
       if (index > 0) await this.#clock.sleep(this.#interTokenMs);
       if (this.#failAfterTokens !== undefined && index >= this.#failAfterTokens) {
         throw new Error('provider hiccup: upstream connection reset');
+      }
+      if (this.#stallAfterTokens !== undefined && index >= this.#stallAfterTokens) {
+        await new Promise<never>(() => undefined);
       }
       call.tokensEmitted += 1;
       call.textEmitted += token;

@@ -1,5 +1,15 @@
-import type { Clock, Dialog, LLM, Pipeline, STT, TTS } from '@voice/core';
-import { StubDialog } from '@voice/core';
+import type {
+  AudioChunk,
+  AudioStream,
+  Clock,
+  Dialog,
+  LLM,
+  Message,
+  Pipeline,
+  STT,
+  TTS,
+} from '@voice/core';
+import { StubDialog, withIdleTimeout } from '@voice/core';
 import {
   AnthropicLlm,
   CannedLlm,
@@ -25,6 +35,48 @@ import {
 
 export type Env = Record<string, string | undefined>;
 
+/**
+ * How long a real provider may send nothing before it is declared stalled.
+ *
+ * Generous, because these are idle budgets rather than total ones — a long reply
+ * is not a stall. They exist for the failure with no error attached: a socket that
+ * stays open while the provider quietly stops sending. Without them the loop waits
+ * forever and the user just sees an assistant with nothing to say.
+ *
+ * Not applied to the fakes: they are deterministic, and a budget there would only
+ * add a way for a slow CI machine to fail a test.
+ */
+const IDLE_BUDGET_MS = { stt: 15_000, llm: 8_000, tts: 8_000 } as const;
+
+function guardStt(stt: STT, clock: Clock, label: string): STT {
+  return {
+    transcribeStream: (audio: AudioStream) =>
+      withIdleTimeout(stt.transcribeStream(audio), {
+        clock,
+        idleMs: IDLE_BUDGET_MS.stt,
+        label,
+      }),
+  };
+}
+
+function guardLlm(llm: LLM, clock: Clock, label: string): LLM {
+  return {
+    respond: (messages: Message[]) =>
+      withIdleTimeout(llm.respond(messages), { clock, idleMs: IDLE_BUDGET_MS.llm, label }),
+  };
+}
+
+function guardTts(tts: TTS, clock: Clock, label: string): TTS {
+  return {
+    synthesizeStream: (text: string): AsyncIterable<AudioChunk> =>
+      withIdleTimeout(tts.synthesizeStream(text), {
+        clock,
+        idleMs: IDLE_BUDGET_MS.tts,
+        label,
+      }),
+  };
+}
+
 const DEMO_SCRIPT = [
   { afterMs: 900, text: 'what is', final: false },
   { afterMs: 500, text: 'what is the weather', final: false },
@@ -46,9 +98,11 @@ function required(env: Env, name: string, provider: string): string {
 function createStt(clock: Clock, env: Env): STT {
   switch (env['STT_PROVIDER'] ?? 'fake') {
     case 'deepgram':
-      return new DeepgramStt({
-        apiKey: required(env, 'DEEPGRAM_API_KEY', 'STT_PROVIDER=deepgram'),
-      });
+      return guardStt(
+        new DeepgramStt({ apiKey: required(env, 'DEEPGRAM_API_KEY', 'STT_PROVIDER=deepgram') }),
+        clock,
+        'deepgram-stt',
+      );
     default:
       return new ScriptedStt({ clock, script: DEMO_SCRIPT });
   }
@@ -58,10 +112,14 @@ function createLlm(clock: Clock, env: Env): LLM {
   switch (env['LLM_PROVIDER'] ?? 'fake') {
     case 'anthropic': {
       const model = env['ANTHROPIC_MODEL'];
-      return new AnthropicLlm({
-        apiKey: required(env, 'ANTHROPIC_API_KEY', 'LLM_PROVIDER=anthropic'),
-        ...(model === undefined || model === '' ? {} : { model }),
-      });
+      return guardLlm(
+        new AnthropicLlm({
+          apiKey: required(env, 'ANTHROPIC_API_KEY', 'LLM_PROVIDER=anthropic'),
+          ...(model === undefined || model === '' ? {} : { model }),
+        }),
+        clock,
+        'anthropic-llm',
+      );
     }
     default:
       return new CannedLlm({ clock, reply: DEMO_REPLY, ttftMs: 200, interTokenMs: 40 });
@@ -71,9 +129,11 @@ function createLlm(clock: Clock, env: Env): LLM {
 function createTts(clock: Clock, env: Env): TTS {
   switch (env['TTS_PROVIDER'] ?? 'fake') {
     case 'deepgram':
-      return new DeepgramTts({
-        apiKey: required(env, 'DEEPGRAM_API_KEY', 'TTS_PROVIDER=deepgram'),
-      });
+      return guardTts(
+        new DeepgramTts({ apiKey: required(env, 'DEEPGRAM_API_KEY', 'TTS_PROVIDER=deepgram') }),
+        clock,
+        'deepgram-tts',
+      );
     // The silent fake is the other half of the criterion-7 demonstration: the same
     // loop run once against a real provider and once against a fake that emits
     // nothing but correctly-shaped silence.

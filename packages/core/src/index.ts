@@ -37,6 +37,12 @@ export { DEFAULT_ENDPOINTER, Endpointer } from './endpointer.js';
 export type { ChunkerConfig } from './chunker.js';
 export { ClauseChunker, DEFAULT_CHUNKER } from './chunker.js';
 
+export type { StartRaceOutcome } from './start-race.js';
+export { StartRace } from './start-race.js';
+
+export type { IdleTimeoutOptions } from './timeout.js';
+export { ProviderStallError, withIdleTimeout } from './timeout.js';
+
 export type { VadConfig, VadEvent } from './vad.js';
 export { DEFAULT_VAD, Vad, frameLevelDb } from './vad.js';
 

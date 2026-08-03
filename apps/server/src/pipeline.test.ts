@@ -1,15 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  AnthropicLlm,
-  CannedLlm,
-  DeepgramStt,
-  DeepgramTts,
-  ScriptedStt,
-  SilentTts,
-  SystemClock,
-  ToneTts,
-} from '@voice/providers';
+import { CannedLlm, ScriptedStt, SilentTts, SystemClock, ToneTts } from '@voice/providers';
 import { createPipeline, describePipeline } from './pipeline.js';
 
 const clock = new SystemClock();
@@ -31,6 +22,11 @@ describe('pipeline selection', () => {
     expect(pipeline.tts).toBeInstanceOf(ToneTts);
   });
 
+  /**
+   * Real providers are wrapped in an idle budget, so `instanceof` is the wrong
+   * probe — a decorator is exactly what we want there. What matters is that
+   * configuration moved each stage off its fake.
+   */
   it('selects real providers from configuration alone', () => {
     const { pipeline } = createPipeline(clock, {
       ...KEYS,
@@ -38,9 +34,18 @@ describe('pipeline selection', () => {
       LLM_PROVIDER: 'anthropic',
       TTS_PROVIDER: 'deepgram',
     });
-    expect(pipeline.stt).toBeInstanceOf(DeepgramStt);
-    expect(pipeline.llm).toBeInstanceOf(AnthropicLlm);
-    expect(pipeline.tts).toBeInstanceOf(DeepgramTts);
+    expect(pipeline.stt).not.toBeInstanceOf(ScriptedStt);
+    expect(pipeline.llm).not.toBeInstanceOf(CannedLlm);
+    expect(pipeline.tts).not.toBeInstanceOf(ToneTts);
+    expect(pipeline.tts).not.toBeInstanceOf(SilentTts);
+  });
+
+  /** Fakes are deterministic; a budget there only adds a way for slow CI to fail. */
+  it('leaves the fakes unwrapped', () => {
+    const { pipeline } = createPipeline(clock, {});
+    expect(pipeline.stt).toBeInstanceOf(ScriptedStt);
+    expect(pipeline.llm).toBeInstanceOf(CannedLlm);
+    expect(pipeline.tts).toBeInstanceOf(ToneTts);
   });
 
   /** The brief's own wording: "once with a real provider and once with the silent fake". */
@@ -49,16 +54,20 @@ describe('pipeline selection', () => {
     const real = createPipeline(clock, { ...base, TTS_PROVIDER: 'deepgram' }).pipeline;
     const fake = createPipeline(clock, { ...base, TTS_PROVIDER: 'fake-silent' }).pipeline;
 
-    expect(real.tts).toBeInstanceOf(DeepgramTts);
     expect(fake.tts).toBeInstanceOf(SilentTts);
+    expect(real.tts).not.toBeInstanceOf(SilentTts);
+
+    // The stages that were not swapped are selected identically — that is the
+    // whole claim of criterion 7, restated at the seam.
     expect(real.stt.constructor).toBe(fake.stt.constructor);
     expect(real.llm.constructor).toBe(fake.llm.constructor);
   });
 
   it('mixes real and fake stages independently', () => {
     const { pipeline } = createPipeline(clock, { ...KEYS, LLM_PROVIDER: 'anthropic' });
-    expect(pipeline.llm).toBeInstanceOf(AnthropicLlm);
+    expect(pipeline.llm).not.toBeInstanceOf(CannedLlm);
     expect(pipeline.stt).toBeInstanceOf(ScriptedStt);
+    expect(pipeline.tts).toBeInstanceOf(ToneTts);
   });
 
   /**

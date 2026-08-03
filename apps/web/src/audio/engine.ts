@@ -9,7 +9,7 @@
  * docs/TESTING.md §2.
  */
 
-import { DEFAULT_VAD, Vad } from '@voice/core';
+import { DEFAULT_VAD, StartRace, Vad } from '@voice/core';
 import type { EarconSound } from '@voice/core';
 
 import { EarconPlayer } from './earcons.js';
@@ -90,6 +90,7 @@ export class AudioEngine {
   #scheduled: Scheduled[] = [];
   #nextStartAt = 0;
   readonly #vad = new Vad();
+  readonly #race = new StartRace();
   #earcons: EarconPlayer | undefined;
   #lastBargeIn: BargeInMeasurement | undefined;
 
@@ -147,11 +148,16 @@ export class AudioEngine {
 
       // Run the detector before forwarding. Barge-in is decided here, in the
       // browser, because the round trip alone would exhaust the latency budget.
-      const wasSpeaking = this.outputActive;
-      this.#vad.setOutputActive(wasSpeaking);
-      const verdict = this.#vad.process(pcm, frameMs);
+      const assistantScheduled = this.outputActive;
+      this.#vad.setOutputActive(assistantScheduled);
+      this.#vad.process(pcm, frameMs);
 
-      if (verdict === 'speech_start' && wasSpeaking) {
+      // Contention is a level, not an edge. Watching only for a rising edge on
+      // user speech catches the assistant-first ordering and silently misses the
+      // other one: a user who was already mid-sentence when the assistant started
+      // produces no edge, so the assistant would talk straight over them. See
+      // StartRace in @voice/core.
+      if (this.#race.observe(assistantScheduled, this.#vad.speaking) === 'yield') {
         const silentAt = this.flush();
         this.#lastBargeIn = {
           detectToSilent: Math.max(0, (silentAt - capturedAt) * 1000),
@@ -278,6 +284,7 @@ export class AudioEngine {
     this.#sink?.disconnect();
     this.#output?.disconnect();
     this.#earcons?.disconnect();
+    this.#race.reset();
     for (const track of this.#stream?.getTracks() ?? []) track.stop();
     await this.#context?.close();
 

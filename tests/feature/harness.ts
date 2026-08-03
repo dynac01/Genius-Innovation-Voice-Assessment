@@ -1,5 +1,5 @@
-import { AudioBridge, StubDialog, VirtualClock } from '@voice/core';
-import type { BridgeEvent, Pipeline } from '@voice/core';
+import { AudioBridge, StubDialog, VirtualClock, withIdleTimeout } from '@voice/core';
+import type { BridgeEvent, LLM, Message, Pipeline } from '@voice/core';
 import { CannedLlm, ScriptedStt, SilentTts, fakeMicrophone } from '@voice/providers';
 import type { SttScriptStep } from '@voice/providers';
 
@@ -23,6 +23,10 @@ export interface HarnessOptions {
   interTokenMs?: number;
   /** Make the model fail mid-reply, standing in for a provider hiccup. */
   failAfterTokens?: number;
+  /** Make the model go silent mid-reply without erroring — the hang case. */
+  stallAfterTokens?: number;
+  /** Wrap the model in an idle budget, so a stall surfaces instead of hanging. */
+  llmIdleTimeoutMs?: number;
   /** Called on every event, so a test can interrupt at a chosen moment. */
   onEvent?: (event: BridgeEvent, ctx: { bridge: AudioBridge; clock: VirtualClock }) => void;
 }
@@ -50,10 +54,30 @@ export function harness(options: HarnessOptions): Harness {
     ttftMs: options.ttftMs ?? 100,
     interTokenMs: options.interTokenMs ?? 25,
     ...(options.failAfterTokens === undefined ? {} : { failAfterTokens: options.failAfterTokens }),
+    ...(options.stallAfterTokens === undefined
+      ? {}
+      : { stallAfterTokens: options.stallAfterTokens }),
   });
+
+  // An idle budget is applied where the real pipeline applies it — around the
+  // provider, outside the loop. The loop has no opinion about provider health.
+  const guardedLlm: LLM =
+    options.llmIdleTimeoutMs === undefined
+      ? llm
+      : {
+          respond: (messages: Message[]) =>
+            withIdleTimeout(llm.respond(messages), {
+              clock,
+              idleMs: options.llmIdleTimeoutMs!,
+              label: 'llm',
+            }),
+        };
   const tts = new SilentTts({ clock, ttfbMs: 40, frameMs: 20 });
-  const pipeline: Pipeline = { stt, llm, tts };
-  const dialog = new StubDialog({ llm });
+  const pipeline: Pipeline = { stt, llm: guardedLlm, tts };
+  const dialog = new StubDialog({
+    llm: guardedLlm,
+    onWarning: (message) => warnings.push(message),
+  });
 
   const bridge: AudioBridge = new AudioBridge({
     pipeline,
