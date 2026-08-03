@@ -20,3 +20,6 @@ export { CannedLlm } from './canned-llm.js';
 
 export type { SilentTtsOptions, TtsRequest } from './silent-tts.js';
 export { SilentTts } from './silent-tts.js';
+
+export type { ToneRequest, ToneTtsOptions } from './tone-tts.js';
+export { ToneTts } from './tone-tts.js';

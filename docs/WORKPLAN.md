@@ -1,6 +1,6 @@
 # Voice Conversation — Ordered Work Plan
 
-**Status:** Phases 0–1 complete (one item open: Codespaces verification)
+**Status:** Phases 0–2 complete on desktop. Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [TESTING.md](TESTING.md)
 
@@ -81,19 +81,27 @@ conversation through them with no real audio.
 **Goal:** sound goes in one end of the browser and comes out the other, through the server.
 Nothing intelligent — this exists purely to kill audio-plumbing risk early.
 
-- [ ] WebSocket transport, single duplex connection, session lifecycle
-- [ ] Browser mic capture via **AudioWorklet** → PCM16 @ 16kHz mono
+- [x] WebSocket transport, single duplex connection, session lifecycle
+- [x] Browser mic capture via **AudioWorklet** → PCM16 @ 16kHz mono
       *(AudioWorklet over MediaRecorder: we need raw PCM for local VAD and streaming STT;
       MediaRecorder gives compressed chunks with added latency)*
-- [ ] `getUserMedia` with `echoCancellation`, `noiseSuppression`, `autoGainControl` enabled
-- [ ] Mic permission handling — request, denied, and revoked states all handled visibly
-- [ ] Browser playback path with an explicit, short jitter buffer (~100–150ms) and a gain node
-- [ ] iOS Safari: `AudioContext` created/resumed inside a user gesture
-- [ ] Round-trip a fake through the whole path end to end
+- [x] `getUserMedia` with `echoCancellation`, `noiseSuppression`, `autoGainControl` enabled
+- [x] Mic permission handling — request, denied, and revoked states all handled visibly
+- [x] Browser playback path with an explicit, short jitter buffer (~100–150ms) and a gain node
+- [x] iOS Safari: `AudioContext` created/resumed inside a user gesture
+- [x] Round-trip a fake through the whole path end to end
 - [ ] Measure and record baseline round-trip latency
 
 **Done when:** a real browser (desktop **and** a real phone) captures audio, streams it to the
 server, and plays server-sent audio back — with the fakes in place.
+
+**Desktop half: closed and automated.** `tests/e2e/vertical-slice.spec.ts` drives the round trip
+in Chromium against a real `AudioWorklet`, a real socket, and a fake media device — asserting
+frames out, transcript in, and assistant audio back. Verified from two cold starts.
+
+**Phone half: open.** iOS Safari's `AudioContext` gesture requirement and playback through a
+phone speaker cannot be automated here. The code handles both (context built inside the click
+handler, `ToneTts` so playback is audible rather than silent) but neither is *verified*.
 
 > **Risk gate.** If AudioWorklet, iOS `AudioContext`, or WebSocket audio framing is going to be
 > a problem, it surfaces here. Do not proceed to Phase 3 with this unresolved.

@@ -53,10 +53,20 @@ export default defineConfig({
     },
   ],
 
-  webServer: {
-    command: 'pnpm --filter @voice/web dev',
-    url: 'http://localhost:5173',
-    reuseExistingServer: !isCI,
-    timeout: 60_000,
-  },
+  // Both halves of the slice: the API/socket host and the browser app. Vite proxies
+  // /ws through to the server, so the browser only ever talks to one origin.
+  webServer: [
+    {
+      command: 'pnpm --filter @voice/server start',
+      url: 'http://localhost:8787/health',
+      reuseExistingServer: !isCI,
+      timeout: 60_000,
+    },
+    {
+      command: 'pnpm --filter @voice/web dev',
+      url: 'http://localhost:5173',
+      reuseExistingServer: !isCI,
+      timeout: 60_000,
+    },
+  ],
 });

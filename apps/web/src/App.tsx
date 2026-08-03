@@ -1,32 +1,34 @@
+import { useVoiceSession } from './useVoiceSession.js';
+
 /**
- * Phase 0 placeholder. The real demo — mic capture, playback, local VAD, earcons,
- * transcript — lands in Phase 2 onward. This exists to prove the app builds, renders,
- * and can import from @voice/core.
+ * Phase 2 — the vertical slice.
+ *
+ * Not the finished demo. This drives the round trip so the audio plumbing can be
+ * verified by hand on a real device: microphone in, WebSocket out, fake pipeline,
+ * audio back. The conversational UI arrives with the loop in Phase 3.
  */
 export function App() {
+  const { state, start, stop } = useVoiceSession();
+
   const secureContext = window.isSecureContext;
   const hasMediaDevices = typeof navigator.mediaDevices?.getUserMedia === 'function';
   const hasAudioWorklet = typeof AudioWorkletNode !== 'undefined';
+  const ready = secureContext && hasMediaDevices && hasAudioWorklet;
+  const active = state.phase === 'running' || state.phase === 'starting';
 
   return (
-    <main
-      style={{
-        fontFamily: 'ui-sans-serif, system-ui, sans-serif',
-        maxWidth: '32rem',
-        margin: '0 auto',
-        padding: '2rem 1.25rem',
-        lineHeight: 1.5,
-      }}
-    >
-      <h1 style={{ fontSize: '1.25rem', marginBottom: '0.25rem' }}>Voice Conversation</h1>
-      <p style={{ opacity: 0.7, marginTop: 0 }}>Phase 1 — contracts and fakes</p>
+    <main className="shell">
+      <header>
+        <h1>Voice Conversation</h1>
+        <p className="muted">Phase 2 — vertical slice</p>
+      </header>
 
       {/*
-        These three checks are the preconditions for the entire demo. Surfacing them
-        here means a Codespace or mobile browser that cannot support the audio path
-        says so immediately, rather than failing opaquely once capture starts.
+        The preconditions for the entire audio path. Surfacing them here means a
+        Codespace or an older mobile browser says so immediately, rather than
+        failing opaquely once capture starts.
       */}
-      <ul style={{ paddingLeft: '1.1rem' }} data-testid="capabilities">
+      <ul className="checks" data-testid="capabilities">
         <li data-testid="cap-secure-context" data-ok={secureContext}>
           Secure context (HTTPS or localhost): {secureContext ? 'yes' : 'no'}
         </li>
@@ -37,6 +39,74 @@ export function App() {
           AudioWorklet available: {hasAudioWorklet ? 'yes' : 'no'}
         </li>
       </ul>
+
+      <button
+        type="button"
+        className="primary"
+        data-testid="session-toggle"
+        disabled={!ready}
+        onClick={active ? stop : start}
+      >
+        {active ? 'Stop session' : 'Start session'}
+      </button>
+
+      {state.error !== undefined && (
+        <p className="error" role="alert" data-testid="error">
+          {state.error}
+        </p>
+      )}
+
+      <dl className="stats" data-testid="stats">
+        <div>
+          <dt>Phase</dt>
+          <dd data-testid="phase">{state.phase}</dd>
+        </div>
+        <div>
+          <dt>Turn</dt>
+          <dd data-testid="turn">{state.turn}</dd>
+        </div>
+        <div>
+          <dt>Mic</dt>
+          <dd data-testid="permission">{state.permission}</dd>
+        </div>
+        <div>
+          <dt>Capture rate</dt>
+          <dd>{state.sampleRate === 0 ? '—' : `${state.sampleRate} Hz`}</dd>
+        </div>
+        <div>
+          <dt>Frames sent</dt>
+          <dd data-testid="frames-sent">{state.framesSent}</dd>
+        </div>
+        <div>
+          <dt>Frames received</dt>
+          <dd data-testid="frames-received">{state.framesReceived}</dd>
+        </div>
+        <div>
+          <dt>Connect</dt>
+          <dd>{state.connectMs === undefined ? '—' : `${state.connectMs} ms`}</dd>
+        </div>
+        <div>
+          <dt>Transcript → audio</dt>
+          <dd data-testid="response-latency">
+            {state.responseLatencyMs === undefined ? '—' : `${state.responseLatencyMs} ms`}
+          </dd>
+        </div>
+      </dl>
+
+      <section className="transcript">
+        <h2>Transcript</h2>
+        <p className="line">
+          <span className="who">You</span>
+          <span data-testid="user-text">{state.userText || '…'}</span>
+        </p>
+        <p className="line">
+          <span className="who">Assistant</span>
+          <span data-testid="assistant-text">{state.assistantText || '…'}</span>
+        </p>
+        <p className="muted small">
+          Last earcon: <span data-testid="last-earcon">{state.lastEarcon ?? '—'}</span>
+        </p>
+      </section>
     </main>
   );
 }

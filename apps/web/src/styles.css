@@ -1,0 +1,130 @@
+/* Mobile-first: the brief grades mobile usability, and a phone is the harder case. */
+:root {
+  color-scheme: light dark;
+  --fg: #16181d;
+  --muted: #5f6672;
+  --bg: #ffffff;
+  --line: #e3e6ea;
+  --accent: #1f6feb;
+  --error: #b3261e;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e7e9ee;
+    --muted: #9aa3b2;
+    --bg: #101317;
+    --line: #262b33;
+    --accent: #5b9bff;
+    --error: #ff7b72;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font:
+    16px/1.5 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  /* Keep content clear of the notch and home indicator on iOS. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+.shell {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+h1 {
+  font-size: 1.3rem;
+  margin: 0;
+}
+h2 {
+  font-size: 0.95rem;
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 0.85rem;
+}
+
+.checks {
+  list-style: none;
+  padding: 0;
+  margin: 1.25rem 0;
+  font-size: 0.9rem;
+}
+.checks li {
+  padding: 0.15rem 0;
+}
+.checks li[data-ok='false'] {
+  color: var(--error);
+}
+
+.primary {
+  width: 100%;
+  /* 3rem clears the 44px touch-target floor on iOS. */
+  min-height: 3rem;
+  border: 0;
+  border-radius: 0.75rem;
+  background: var(--accent);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.error {
+  color: var(--error);
+  font-size: 0.9rem;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 1.5rem 0;
+  padding: 1rem 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.stats div {
+  margin: 0;
+}
+.stats dt {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.stats dd {
+  margin: 0.1rem 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.transcript .line {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+.transcript .who {
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding-top: 0.15rem;
+}

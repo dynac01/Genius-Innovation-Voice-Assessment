@@ -11,9 +11,11 @@
   },
   "dependencies": {
     "@voice/core": "workspace:*",
-    "@voice/providers": "workspace:*"
+    "@voice/providers": "workspace:*",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@types/ws": "^8.18.1",
     "tsx": "^4.19.2"
   }
 }

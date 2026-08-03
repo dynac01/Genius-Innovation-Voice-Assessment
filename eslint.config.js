@@ -57,4 +57,24 @@ export default tseslint.config(
       '@typescript-eslint/no-non-null-assertion': 'off',
     },
   },
+
+  /*
+   * AudioWorklet code runs in AudioWorkletGlobalScope, not a window or a worker, so
+   * its globals are declared nowhere else. This is the price of serving the worklet
+   * as a static file rather than routing it through the bundler — a trade made
+   * deliberately, since `addModule` fetches a URL and a dev-versus-build discrepancy
+   * there would only surface in production.
+   */
+  {
+    files: ['apps/web/public/worklets/*.js'],
+    languageOptions: {
+      globals: {
+        AudioWorkletProcessor: 'readonly',
+        registerProcessor: 'readonly',
+        currentFrame: 'readonly',
+        currentTime: 'readonly',
+        sampleRate: 'readonly',
+      },
+    },
+  },
 );

@@ -25,3 +25,14 @@ export type { BargeInBehavior, Dialog, EarconSound, FromBridge, ToBridge } from 
 
 export type { Clock } from './clock.js';
 export { VirtualClock } from './clock.js';
+
+export { AsyncQueue } from './async-queue.js';
+
+export type { AudioFrame, ClientEvent, ServerEvent, TurnState } from './wire.js';
+export {
+  AUDIO_HEADER_BYTES,
+  decodeAudioFrame,
+  encodeAudioFrame,
+  isClientEvent,
+  isServerEvent,
+} from './wire.js';
