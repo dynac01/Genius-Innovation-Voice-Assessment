@@ -1,3 +1,5 @@
+import { CLAUDE_MODELS } from '@voice/core';
+
 import { useVoiceSession } from './useVoiceSession.js';
 
 /**
@@ -9,7 +11,7 @@ import { useVoiceSession } from './useVoiceSession.js';
  */
 const STAGES = [
   { key: 'stt', label: 'Speech-to-text', real: 'Deepgram Nova-3', fake: 'Scripted' },
-  { key: 'llm', label: 'Model', real: 'Claude Haiku 4.5', fake: 'Canned' },
+  { key: 'llm', label: 'Model', real: 'Claude', fake: 'Canned' },
   { key: 'tts', label: 'Text-to-speech', real: 'Deepgram Aura-2', fake: 'Tone' },
 ] as const;
 
@@ -106,16 +108,40 @@ export function App() {
                 <span className="stage-label">{stage.label}</span>
                 <select
                   data-testid={`provider-${stage.key}`}
-                  value={wanted[stage.key]}
+                  value={
+                    stage.key === 'llm' && wanted.llm === 'real'
+                      ? wanted.llmModel
+                      : wanted[stage.key]
+                  }
                   onChange={(e) => choose(stage.key, e.target.value)}
                 >
                   <option value="fake">{stage.fake} (fake)</option>
                   {stage.key === 'tts' && <option value="silent">Silent (fake)</option>}
-                  <option value="real" disabled={canBeReal === false}>
-                    {stage.real}
-                    {canBeReal === false ? ' — no key' : ''}
-                  </option>
+                  {/*
+                    The model stage lists each Claude by name; the other two have a
+                    single real implementation and say so. One control either way —
+                    a second dropdown that only means anything when the first says
+                    "real" is a worse trade than a slightly longer list.
+                  */}
+                  {stage.key === 'llm' ? (
+                    CLAUDE_MODELS.map((model) => (
+                      <option key={model.id} value={model.id} disabled={canBeReal === false}>
+                        {model.label}
+                        {canBeReal === false ? ' — no key' : ''}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="real" disabled={canBeReal === false}>
+                      {stage.real}
+                      {canBeReal === false ? ' — no key' : ''}
+                    </option>
+                  )}
                 </select>
+                {stage.key === 'llm' && wanted.llm === 'real' && (
+                  <span className="stage-note">
+                    {CLAUDE_MODELS.find((m) => m.id === wanted.llmModel)?.note}
+                  </span>
+                )}
                 {/* What loaded, not what was asked for. */}
                 {active !== undefined && active !== wanted[stage.key] && (
                   <span className="stage-note" data-testid={`provider-${stage.key}-actual`}>

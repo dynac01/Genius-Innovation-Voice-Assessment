@@ -1,3 +1,4 @@
+import { DEFAULT_CLAUDE_MODEL } from '@voice/core';
 import type { PipelineAvailability, PipelineSelection, TurnState } from '@voice/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -93,7 +94,14 @@ const INITIAL: SessionState = {
  * no turn logic — the server drives state, the browser plays what arrives. Phases 3
  * and 4 add the parts that make it a conversation.
  */
-const DEFAULT_WANTED: PipelineSelection = { stt: 'fake', llm: 'fake', tts: 'fake' };
+const DEFAULT_WANTED: PipelineSelection = {
+  stt: 'fake',
+  llm: 'fake',
+  tts: 'fake',
+  // Carried even while the fake is selected, so switching to a real model picks the
+  // fastest one rather than landing on an empty menu value.
+  llmModel: DEFAULT_CLAUDE_MODEL,
+};
 
 /**
  * Only the newest line can be in progress.
@@ -454,7 +462,19 @@ export function useVoiceSession(): {
    */
   const choose = useCallback(
     (stage: keyof PipelineSelection, value: string) => {
-      const next = { ...wantedRef.current, [stage]: value } as PipelineSelection;
+      /*
+       * The model menu sets two fields from one control.
+       *
+       * Its options are model ids rather than `'real'`, because a menu that reads
+       * "Canned / Claude Haiku 4.5 / Claude Sonnet 5" is the honest description of
+       * the choice being made. The selection type keeps them apart — `llm` is which
+       * implementation, `llmModel` is which model — so the translation happens here,
+       * at the edge, rather than by blurring the two on the wire.
+       */
+      const next =
+        stage === 'llm' && value !== 'fake'
+          ? ({ ...wantedRef.current, llm: 'real', llmModel: value } as PipelineSelection)
+          : ({ ...wantedRef.current, [stage]: value } as PipelineSelection);
       setWanted(next);
       wantedRef.current = next;
       if (socketRef.current !== undefined) {

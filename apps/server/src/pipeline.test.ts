@@ -1,3 +1,4 @@
+import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, resolveModel } from '@voice/core';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -13,8 +14,10 @@ import {
 import {
   assertEnvIsCoherent,
   createPipeline,
+  defaultSelection,
   describePipeline,
   providerAvailability,
+  resolveSelection,
 } from './pipeline.js';
 
 const clock = new SystemClock();
@@ -170,13 +173,89 @@ describe('pipeline selection', () => {
   });
 
   it('reports the default and what is available', () => {
+    const models = CLAUDE_MODELS.map((m) => m.id);
+
+    // No `llmModel` on either: the model stage fell back to the fake, and naming a
+    // model beside a canned reply is the misreport `default` exists to prevent.
     expect(describePipeline({})).toEqual({
       default: { stt: 'fake', llm: 'fake', tts: 'fake' },
       available: { stt: false, llm: false, tts: false },
+      models,
     });
     expect(describePipeline({ ...KEYS, STT_PROVIDER: 'deepgram' })).toEqual({
       default: { stt: 'real', llm: 'fake', tts: 'fake' },
       available: { stt: true, llm: true, tts: true },
+      models,
     });
+  });
+
+  it('names the model once it is genuinely in force', () => {
+    const described = describePipeline({ ...KEYS, LLM_PROVIDER: 'anthropic' }) as {
+      default: { llm: string; llmModel?: string };
+    };
+    expect(described.default.llm).toBe('real');
+    expect(described.default.llmModel).toBe(DEFAULT_CLAUDE_MODEL);
+  });
+});
+
+/**
+ * Model selection.
+ *
+ * The id arrives from the browser, so these are as much about the trust boundary as
+ * about the feature: a whitelist is the difference between "the user picked a model"
+ * and "a malformed message became a request we never meant to send".
+ */
+describe('claude model selection', () => {
+  const env = { ANTHROPIC_API_KEY: 'k', DEEPGRAM_API_KEY: 'k' };
+
+  it('defaults to the fastest model, because a voice loop feels time-to-first-word', () => {
+    expect(DEFAULT_CLAUDE_MODEL).toBe(CLAUDE_MODELS[0]?.id);
+    expect(defaultSelection({}).llmModel).toBe(DEFAULT_CLAUDE_MODEL);
+  });
+
+  it('honours a recognised model from the browser', () => {
+    const sonnet = CLAUDE_MODELS[1]!.id;
+    const selected = resolveSelection(
+      { stt: 'fake', llm: 'real', tts: 'fake', llmModel: sonnet },
+      env,
+    );
+    expect(selected.llmModel).toBe(sonnet);
+  });
+
+  it('ignores an unrecognised model rather than forwarding it to the API', () => {
+    const selected = resolveSelection(
+      { stt: 'fake', llm: 'real', tts: 'fake', llmModel: 'claude-not-a-real-model' },
+      env,
+    );
+    expect(selected.llmModel).toBeUndefined();
+    expect(resolveModel('claude-not-a-real-model')).toBe(DEFAULT_CLAUDE_MODEL);
+  });
+
+  it('reports no model when the model stage fell back to the fake', () => {
+    // Reporting a model name next to a canned reply would be the same lie the
+    // `selected` field exists to prevent — showing what was asked for, not what ran.
+    const selected = resolveSelection(
+      { stt: 'fake', llm: 'real', tts: 'fake', llmModel: CLAUDE_MODELS[1]!.id },
+      {},
+    );
+    expect(selected.llm).toBe('fake');
+    expect(selected.llmModel).toBeUndefined();
+  });
+
+  it('takes the environment as a starting point the browser can override', () => {
+    const opus = CLAUDE_MODELS[3]!.id;
+    expect(defaultSelection({ ANTHROPIC_MODEL: opus }).llmModel).toBe(opus);
+    expect(defaultSelection({ ANTHROPIC_MODEL: 'gpt-4' }).llmModel).toBe(DEFAULT_CLAUDE_MODEL);
+  });
+
+  it('offers only ids that were verified against the live API', () => {
+    // Every id here was checked with a real request before being listed. A menu
+    // entry the provider rejects is worse than one fewer option.
+    for (const model of CLAUDE_MODELS) {
+      expect(model.id).toMatch(/^claude-/u);
+      expect(model.label.length).toBeGreaterThan(0);
+      expect(model.note.length).toBeGreaterThan(0);
+    }
+    expect(new Set(CLAUDE_MODELS.map((m) => m.id)).size).toBe(CLAUDE_MODELS.length);
   });
 });

@@ -28,6 +28,19 @@ export interface PipelineSelection {
   readonly stt: 'fake' | 'real';
   readonly llm: 'fake' | 'real';
   readonly tts: 'fake' | 'silent' | 'real';
+  /**
+   * Which Claude model, when `llm` is `real`.
+   *
+   * Deliberately a separate field rather than more values on `llm`. That field
+   * answers "which implementation", which is the pluggability claim the brief
+   * checks; this answers "which parameter of that implementation". Folding the
+   * second into the first would make swapping a *provider* and picking a *model*
+   * look like the same operation, and only one of them is criterion 7.
+   *
+   * Absent means the default. Unrecognised also means the default — see
+   * `resolveModel`, and note the value crosses a trust boundary.
+   */
+  readonly llmModel?: string;
 }
 
 /** Which stages *can* be real — i.e. have a key configured on the server. */

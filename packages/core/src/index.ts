@@ -45,6 +45,8 @@ export type {
 } from './start-race.js';
 export { DEFAULT_START_RACE, StartRace, claimFrom } from './start-race.js';
 export { Resampler } from './resample.js';
+export type { ModelOption } from './models.js';
+export { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, isKnownModel, resolveModel } from './models.js';
 
 export type { IdleTimeoutOptions } from './timeout.js';
 export { ProviderStallError, withIdleTimeout } from './timeout.js';

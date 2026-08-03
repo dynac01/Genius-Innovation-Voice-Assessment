@@ -118,19 +118,66 @@ test.describe('vertical slice round trip', () => {
 
     for (const stage of ['stt', 'llm', 'tts'] as const) {
       const select = page.getByTestId(`provider-${stage}`);
-      const real = select.locator('option[value="real"]');
 
-      // "no key" appears when, and only when, the server says the key is missing.
-      await expect(real).toHaveText(truth.available[stage] ? /^(?!.*no key).*$/ : /no key/, {
-        timeout: 10_000,
-      });
-      await expect
-        .poll(async () => real.evaluate((o: HTMLOptionElement) => o.disabled))
-        .toBe(!truth.available[stage]);
+      /*
+       * The model stage lists each Claude by id rather than a single `real` option,
+       * because "which model" is a choice a user makes by name. The other two have
+       * one real implementation each. So the *set* of real options differs by stage
+       * while the rules about them do not: they carry "no key" exactly when the
+       * server says the key is missing, and they are disabled on the same condition.
+       */
+      const realOptions =
+        stage === 'llm'
+          ? select.locator('option[value^="claude-"]')
+          : select.locator('option[value="real"]');
 
-      // And the control opens on whatever the server is configured to default to.
-      await expect.poll(async () => select.inputValue()).toBe(truth.default[stage]);
+      const count = await realOptions.count();
+      expect(count, `no real options offered for ${stage}`).toBeGreaterThan(0);
+
+      for (let i = 0; i < count; i += 1) {
+        const option = realOptions.nth(i);
+        await expect(option).toHaveText(truth.available[stage] ? /^(?!.*no key).*$/ : /no key/, {
+          timeout: 10_000,
+        });
+        await expect
+          .poll(async () => option.evaluate((o: HTMLOptionElement) => o.disabled))
+          .toBe(!truth.available[stage]);
+      }
+
+      // And the control opens on whatever the server is configured to default to —
+      // which for the model stage is the model id, not the word "real".
+      const expected =
+        stage === 'llm' && truth.default['llm'] === 'real'
+          ? truth.default['llmModel']
+          : truth.default[stage];
+      await expect.poll(async () => select.inputValue()).toBe(expected);
     }
+  });
+
+  /**
+   * The menu and the server's whitelist have to agree.
+   *
+   * They are defined once in `@voice/core` for exactly this reason: two lists drift,
+   * and a drifted menu offers a model the server will quietly refuse and replace —
+   * which presents as picking Opus and being answered by Haiku.
+   */
+  test('the model menu offers every model the server accepts', async ({ page }) => {
+    await page.goto('/');
+
+    const offered = await page
+      .getByTestId('provider-llm')
+      .locator('option[value^="claude-"]')
+      .evaluateAll((options) => options.map((o) => (o as HTMLOptionElement).value));
+
+    expect(offered.length).toBeGreaterThan(1);
+    expect(new Set(offered).size, 'duplicate model in the menu').toBe(offered.length);
+
+    // Every id must be one the server would resolve to itself rather than replace.
+    const truth = await page.evaluate(async () => {
+      const r = await fetch('/api/health');
+      return (await r.json()).pipeline as { models: string[] };
+    });
+    expect(offered).toEqual(truth.models);
   });
 
   /**

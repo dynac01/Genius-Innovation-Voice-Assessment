@@ -207,7 +207,11 @@ The server prints its default and what it can offer, then logs each session's ac
 [Nest] LOG [VoiceGateway] [75a1295c] session.hello {"announcedRate":44100,"usingRate":44100,...}
 ```
 
-**Why Haiku 4.5:** a latency decision, not a cost one. In a voice loop, time-to-first-token *is* the product — you hear silence until the first clause reaches the synthesiser. Swap `ANTHROPIC_MODEL` for a larger Claude if replies feel thin; nothing else changes.
+**Why Haiku 4.5 is the default:** a latency decision, not a cost one. In a voice loop, time-to-first-token *is* the product — you hear silence until the first clause reaches the synthesiser, so a cleverer answer that starts a second later is usually the worse experience.
+
+The **Model** dropdown offers Haiku 4.5, Sonnet 4.6, Sonnet 5 and Opus 5, switchable mid-session. Every id was verified against the live API before being listed, and the tradeoff is audible: on a short prompt these start speaking roughly 1.4 s, 1.6 s, 1.4 s and 2.5 s in. `ANTHROPIC_MODEL` sets the starting point; the browser overrides it.
+
+The model is a **parameter** of the real provider, not a different implementation — so it travels as its own field (`llmModel`) rather than as more values on `llm`. Folding them together would make swapping a *provider* and picking a *model* look like the same operation, and only the first is criterion 7. The id crosses a trust boundary, so the server treats the shared list in `@voice/core` as a whitelist: anything unrecognised becomes the default rather than a request nobody intended.
 
 **One mapping worth knowing.** Deepgram's `final` is wired to `speech_final`, not `is_final`. `is_final` means "this text is stable" — true repeatedly mid-sentence. `speech_final` means "the speaker stopped." Using the former would end the turn on the first stable clause and cut you off mid-thought.
 

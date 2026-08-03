@@ -11,7 +11,13 @@ import type {
   STT,
   TTS,
 } from '@voice/core';
-import { StubDialog, withIdleTimeout } from '@voice/core';
+import {
+  CLAUDE_MODELS,
+  StubDialog,
+  isKnownModel,
+  resolveModel,
+  withIdleTimeout,
+} from '@voice/core';
 import {
   AnthropicLlm,
   CannedLlm,
@@ -115,6 +121,10 @@ export function defaultSelection(env: Env): PipelineSelection {
       : (env['TTS_PROVIDER'] ?? 'fake') === 'fake-silent'
         ? 'silent'
         : 'fake',
+    // Always present, so the browser's menu opens on a real selection rather than
+    // on a blank. `ANTHROPIC_MODEL` is the operator's starting point; anything it
+    // does not recognise falls back to the default rather than propagating.
+    llmModel: resolveModel(env['ANTHROPIC_MODEL']),
   };
 }
 
@@ -153,10 +163,19 @@ export function assertEnvIsCoherent(env: Env): void {
  */
 export function resolveSelection(want: PipelineSelection, env: Env): PipelineSelection {
   const can = providerAvailability(env);
+  const llm = want.llm === 'real' && can.llm ? 'real' : 'fake';
   return {
     stt: want.stt === 'real' && can.stt ? 'real' : 'fake',
-    llm: want.llm === 'real' && can.llm ? 'real' : 'fake',
+    llm,
     tts: want.tts === 'real' && can.tts ? 'real' : want.tts === 'silent' ? 'silent' : 'fake',
+    /*
+     * Reported back only when it is actually in force, and only when recognised.
+     *
+     * `selected` is what the UI renders, and its whole job is to show what *loaded*
+     * rather than what was asked for. Echoing a model name next to a canned fake, or
+     * echoing an id the server rejected, would be the same lie in a new place.
+     */
+    ...(llm === 'real' && isKnownModel(want.llmModel) ? { llmModel: want.llmModel } : {}),
   };
 }
 
@@ -168,16 +187,23 @@ function createStt(clock: Clock, env: Env, choice: PipelineSelection['stt']): ST
     : new ScriptedStt({ clock, script: DEMO_SCRIPT });
 }
 
-function createLlm(clock: Clock, env: Env, choice: PipelineSelection['llm']): LLM {
+function createLlm(clock: Clock, env: Env, choice: PipelineSelection['llm'], want?: string): LLM {
   if (choice !== 'real') {
     return new CannedLlm({ clock, reply: DEMO_REPLY, ttftMs: 200, interTokenMs: 40 });
   }
-  const model = env['ANTHROPIC_MODEL'];
+  /*
+   * Precedence: the browser's choice, then the environment, then the default.
+   *
+   * The browser wins because picking a model is a user action taken in front of the
+   * running system, while `ANTHROPIC_MODEL` is an operator setting a starting point
+   * at deploy time. That is the same ordering the provider selection already uses.
+   *
+   * `resolveModel` is a whitelist, not a hint. The value crossed the socket, so an
+   * unrecognised id becomes the default rather than a request we never meant to send.
+   */
+  const model = want !== undefined ? resolveModel(want) : resolveModel(env['ANTHROPIC_MODEL']);
   return guardLlm(
-    new AnthropicLlm({
-      apiKey: env['ANTHROPIC_API_KEY'] ?? '',
-      ...(model === undefined || model === '' ? {} : { model }),
-    }),
+    new AnthropicLlm({ apiKey: env['ANTHROPIC_API_KEY'] ?? '', model }),
     clock,
     'anthropic-llm',
   );
@@ -245,7 +271,7 @@ export function createPipeline(
   log?: ProviderLog,
 ): PipelineSetup {
   const selected = resolveSelection(want ?? defaultSelection(env), env);
-  const llm = createLlm(clock, env, selected.llm);
+  const llm = createLlm(clock, env, selected.llm, selected.llmModel);
   const pipeline: Pipeline = {
     stt: createStt(clock, env, selected.stt),
     llm,
@@ -267,5 +293,15 @@ export function describePipeline(env: Env = {}): Record<string, unknown> {
   return {
     default: resolveSelection(defaultSelection(env), env),
     available: providerAvailability(env),
+    /*
+     * The models the server will actually accept.
+     *
+     * Published so the menu is discoverable rather than assumed. Both ends already
+     * read the same list from `@voice/core`, which makes drift impossible today —
+     * but a client that fetches the set instead of hardcoding it stays correct if
+     * that ever stops being true, and it lets a test assert the two agree rather
+     * than trust that they do.
+     */
+    models: CLAUDE_MODELS.map((model) => model.id),
   };
 }
