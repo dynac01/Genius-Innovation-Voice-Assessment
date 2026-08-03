@@ -7,9 +7,21 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
+  // Split across three lifecycle hooks so a prebuild can actually bake the slow part.
+  //
+  // Prebuilds run `onCreateCommand` and `updateContentCommand` on push and store the
+  // result in the image; `postCreateCommand` runs afterwards on every Codespace and
+  // is never baked. Putting `pnpm install` there — which is where it was — means a
+  // prebuild saves almost nothing, because the expensive step still runs on open.
+  //
   // corepack reads the pnpm version from the `packageManager` field in package.json,
   // so it is not repeated here. One source of truth, shared with CI.
-  "postCreateCommand": "corepack enable && pnpm install --frozen-lockfile",
+  "onCreateCommand": "corepack enable",
+
+  // Baked by the prebuild, and re-run when a prebuild is refreshed against newer
+  // source — which is exactly the property `pnpm install` wants. Frozen, so a
+  // Codespace can never resolve versions CI did not test.
+  "updateContentCommand": "pnpm install --frozen-lockfile",
 
   // Start both halves on attach, so a Codespace opens on a running demo rather than
   // on a terminal and a README. `pnpm dev` runs the Nest server and Vite together.

@@ -319,6 +319,27 @@ pnpm bench:latency     # prints the barge-in number. Never gated in CI
 Open the repo in a Codespace. The devcontainer installs everything and starts both
 halves on attach, so it opens on a running demo rather than on a terminal.
 
+### Prebuilds
+
+Worth enabling, and it is a repository setting rather than a file — GitHub owns the
+generated workflow, so committing one by hand does not work:
+
+**Settings → Codespaces → Prebuild configuration → Set up prebuild**, on `main`,
+triggered *On push*.
+
+What makes the difference is where the work is declared. Prebuilds run
+`onCreateCommand` and `updateContentCommand` on push and bake the result into the
+image; `postCreateCommand` runs afterwards on every Codespace and is never baked. So
+the install lives in `updateContentCommand` — put it in `postCreateCommand`, which is
+the obvious place and where it started, and a prebuild saves almost nothing because
+the expensive step still runs when someone opens the Codespace.
+
+| Hook | When | Prebuilt? |
+|---|---|---|
+| `onCreateCommand` | `corepack enable` | yes |
+| `updateContentCommand` | `pnpm install --frozen-lockfile` | yes, and re-run when the prebuild refreshes against newer source |
+| `postAttachCommand` | `pnpm dev` | no — it starts the demo, which is not something to bake |
+
 Forwarded ports are HTTPS, which makes the page a **secure context** — and that is
 not a detail: `getUserMedia` refuses to run outside one, so this is the reason the
 microphone works in a Codespace at all.
