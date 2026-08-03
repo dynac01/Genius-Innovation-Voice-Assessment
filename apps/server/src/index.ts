@@ -35,10 +35,12 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 wss.on('connection', (socket: WebSocket) => {
   const sessionId = randomUUID().slice(0, 8);
   const clock = new SystemClock();
+  const { pipeline, dialog } = createPipeline(clock, process.env);
   const session = new Session({
     sessionId,
     clock,
-    pipeline: createPipeline(clock, process.env),
+    pipeline,
+    dialog,
     send: (payload) => {
       if (socket.readyState === socket.OPEN) socket.send(payload);
     },

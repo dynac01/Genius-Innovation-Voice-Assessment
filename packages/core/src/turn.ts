@@ -7,7 +7,8 @@
  * transition in one place instead of as a state that quietly drifts.
  *
  *   idle ──start──▶ listening ──endpoint──▶ thinking ──audio──▶ speaking
- *     ▲                  ▲                      │                   │
+ *     ▲                  ▲   ▲                  │                   │
+ *     │                  │   └──── resume ──────┤                   │
  *     └──────stop────────┴──────reply_done──────┴───────────────────┘
  *
  * `interrupt` is legal only while speaking — that is what barge-in *is*, and a
@@ -27,6 +28,8 @@ export type TurnEvent =
   | { type: 'reply_done' }
   /** The user began speaking over the assistant. */
   | { type: 'interrupt' }
+  /** A paused reply is being picked back up from where the user stopped hearing it. */
+  | { type: 'resume' }
   /** Session closing. */
   | { type: 'stop' };
 
@@ -37,10 +40,14 @@ const TRANSITIONS: Record<TurnState, Partial<Record<TurnEvent['type'], TurnState
   },
   listening: {
     endpoint: 'thinking',
+    // Resuming re-enters the reply from listening, which is where an interrupt left
+    // the machine. It is distinct from `endpoint`: no new utterance is being answered.
+    resume: 'thinking',
     stop: 'idle',
   },
   thinking: {
     audio: 'speaking',
+    resume: 'thinking',
     // A reply that produced no audio at all still ends the turn rather than wedging.
     reply_done: 'listening',
     interrupt: 'listening',

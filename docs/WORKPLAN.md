@@ -1,6 +1,6 @@
 # Voice Conversation — Ordered Work Plan
 
-**Status:** Phases 0–4 complete. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
+**Status:** Phases 0–5 complete. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [TESTING.md](TESTING.md)
 
@@ -198,26 +198,50 @@ it is a threshold-tuning question (`duckedThresholdDb`), not an architectural on
 **Goal:** the interruption *means* something. Criterion 2 is the one most submissions will get
 subtly wrong.
 
-- [ ] **Text↔audio offset map:** track which characters correspond to which emitted audio chunks
-- [ ] **Played-through accounting:** track what actually reached the speaker, not what was
+- [x] **Text↔audio offset map:** track which characters correspond to which emitted audio chunks
+- [x] **Played-through accounting:** track what actually reached the speaker, not what was
       generated ([DESIGN.md §4.2](DESIGN.md#42-resume-where-it-left-off-is-the-sneaky-one))
-- [ ] Resume continues from the played-through offset, mid-sentence if that's where it stopped
-- [ ] Stub dialog implementing the fixed protocol, with documented and consistent semantics:
-  - [ ] "keep going" / "continue" / "go on" → **resume**
-  - [ ] "hold on" / "wait" / "one sec" → **pause**
-  - [ ] short backchannels ("mhm", "yeah", "right") → **ignore**, resume automatically
-  - [ ] anything else substantive → **fresh turn**, abandon the prior reply
-  - [ ] explicit abandon → **cancel**
-- [ ] **Unit:** text↔audio offset map — the resume point is the exact last character *heard*.
+- [x] Resume continues from the played-through offset, mid-sentence if that's where it stopped
+- [x] Stub dialog implementing the fixed protocol, with documented and consistent semantics:
+  - [x] "keep going" / "continue" / "go on" → **resume**
+  - [x] "hold on" / "wait" / "one sec" → **pause**
+  - [x] short backchannels ("mhm", "yeah", "right") → **ignore**, resume automatically
+  - [x] anything else substantive → **fresh turn**, abandon the prior reply
+  - [x] explicit abandon → **cancel**
+- [x] **Unit:** text↔audio offset map — the resume point is the exact last character *heard*.
       The feature test below passes whether the offset is exact or a word off; only this
       pins it ([TESTING.md §2](TESTING.md#2-unit--pure-logic-colocated))
-- [ ] **Unit:** utterance classifier — table over all five branches plus ambiguous inputs
-- [ ] **Feature:** `barge_in: pause` followed by a resume continues the remaining text **(criterion 2)**
-- [ ] **Feature:** new substantive speech abandons the prior reply and it does not resume **(criterion 3)**
+- [x] **Unit:** utterance classifier — table over all five branches plus ambiguous inputs
+- [x] **Feature:** `barge_in: pause` followed by a resume continues the remaining text **(criterion 2)**
+- [x] **Feature:** new substantive speech abandons the prior reply and it does not resume **(criterion 3)**
 - [ ] Document the semantics table in the README
 
 **Done when:** criteria 2 and 3 have passing tests, and resuming an interrupted reply is
 audibly correct on camera — it continues, it doesn't restart.
+
+**Structural change:** the loop split into `AudioBridge` (everything acoustic) and `Dialog`
+(everything decided). The model moved *behind* the dialog protocol, where the brief puts it —
+`say` commands flow back per clause, so streaming survives the split. A more capable decision
+engine now replaces `StubDialog` without `bridge.ts` changing a line.
+
+**Resume semantics** — the table the README needs:
+
+| The user says | Intent | Protocol | Behaviour |
+|---|---|---|---|
+| "keep going", "go on", "carry on" | `resume` | `barge_in: finish` | Continues from the last character *heard* |
+| "mhm", "yeah", "right", "got it" | `backchannel` | `barge_in: finish` | Same — an acknowledgement is not an instruction |
+| "hold on", "wait", "one sec" | `pause` | `barge_in: pause` | Reply stays parked; nothing is spoken |
+| "stop", "never mind", "that's enough" | `cancel` | `barge_in: stop` | Reply discarded entirely |
+| anything substantive | `fresh` | `barge_in: stop` + `say` | Prior reply abandoned; the new utterance drives the next |
+
+A control phrase counts **only as the whole utterance**. "Keep going" resumes; "keep going, but
+in Spanish" is a new instruction. Mistaking an instruction for a control word silently drops the
+user's request; the reverse costs one redundant reply.
+
+**Pausing stops the voice, not the thinking.** While parked, the dialog keeps generating and the
+bridge keeps accumulating text — it simply does not speak it. Resuming is therefore instant
+rather than paying generation latency twice, and the resume point is exact because the text was
+never discarded.
 
 ---
 

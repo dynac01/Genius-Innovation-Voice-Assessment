@@ -1,13 +1,22 @@
-import type { AudioChunk, ClientEvent, Clock, LoopEvent, Pipeline, ServerEvent } from '@voice/core';
-import { AsyncQueue, VoiceLoop, encodeAudioFrame } from '@voice/core';
+import type {
+  AudioChunk,
+  BridgeEvent,
+  ClientEvent,
+  Clock,
+  Dialog,
+  Pipeline,
+  ServerEvent,
+} from '@voice/core';
+import { AsyncQueue, AudioBridge, encodeAudioFrame } from '@voice/core';
 
 /**
  * One browser connection's worth of state.
  *
  * Deliberately thin: it owns the socket's framing and nothing else. All the
  * behaviour — turn-taking, endpointing, streaming the model into the synthesiser —
- * lives in `VoiceLoop` inside @voice/core, where it is driven by fakes in virtual
- * time. This file is the adapter that turns loop events into wire events.
+ * lives in `AudioBridge` and the dialog inside @voice/core, where both are driven by
+ * fakes in virtual time. This file is the adapter that turns bridge events into wire
+ * events.
  *
  * `send` is injected rather than a socket being passed in, so a session is testable
  * without opening a port and the transport can change without touching this file.
@@ -15,6 +24,7 @@ import { AsyncQueue, VoiceLoop, encodeAudioFrame } from '@voice/core';
 export interface SessionOptions {
   readonly sessionId: string;
   readonly pipeline: Pipeline;
+  readonly dialog: Dialog;
   readonly clock: Clock;
   readonly send: (payload: string | ArrayBuffer) => void;
   readonly log?: (message: string) => void;
@@ -23,7 +33,7 @@ export interface SessionOptions {
 export class Session {
   readonly #options: SessionOptions;
   readonly #mic = new AsyncQueue<AudioChunk>();
-  readonly #loop: VoiceLoop;
+  readonly #bridge: AudioBridge;
   #running: Promise<void> | undefined;
   #outboundSeq = 0;
   #sampleRate = 16_000;
@@ -31,8 +41,9 @@ export class Session {
 
   constructor(options: SessionOptions) {
     this.#options = options;
-    this.#loop = new VoiceLoop({
+    this.#bridge = new AudioBridge({
       pipeline: options.pipeline,
+      dialog: options.dialog,
       clock: options.clock,
       onEvent: (event) => this.#relay(event),
       onWarning: (message) => this.#log(message),
@@ -59,7 +70,7 @@ export class Session {
         // This is the slow path: abandon generation and synthesis, and record what
         // the user actually heard so Phase 5 can resume from it.
         this.#log(`interrupt at t=${event.t}`);
-        this.#loop.interrupt(event.t);
+        this.#bridge.interrupt(event.t);
         break;
     }
   }
@@ -77,7 +88,7 @@ export class Session {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
-    this.#loop.stop();
+    this.#bridge.stop();
     this.#mic.close();
   }
 
@@ -88,12 +99,12 @@ export class Session {
 
   #start(): void {
     if (this.#running !== undefined) return;
-    this.#running = this.#loop.run(this.#mic).catch((error: unknown) => {
+    this.#running = this.#bridge.run(this.#mic).catch((error: unknown) => {
       this.#fail(error);
     });
   }
 
-  #relay(event: LoopEvent): void {
+  #relay(event: BridgeEvent): void {
     switch (event.type) {
       case 'audio':
         this.#sendAudio(event.chunk);
@@ -105,9 +116,12 @@ export class Session {
         this.#log(`interrupted after ${event.spokenChars} chars`);
         break;
       case 'pause_detected':
-        // Becomes a `pause_detected` on the bridge protocol once the dialog layer
-        // lands in Phase 5. The browser has no use for it.
+        // Already forwarded to the dialog over the protocol; the browser has no use
+        // for it, so it is only logged here.
         this.#log(`pause at t=${event.at}`);
+        break;
+      case 'resumed':
+        this.#log(`resumed from char ${event.from}`);
         break;
       case 'state':
         this.#emit({ type: 'state', state: event.state });

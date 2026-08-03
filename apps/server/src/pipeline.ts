@@ -1,4 +1,5 @@
-import type { Clock, Pipeline } from '@voice/core';
+import type { Clock, Dialog, Pipeline } from '@voice/core';
+import { StubDialog } from '@voice/core';
 import { CannedLlm, ScriptedStt, SilentTts, ToneTts } from '@voice/providers';
 
 /**
@@ -15,10 +16,17 @@ import { CannedLlm, ScriptedStt, SilentTts, ToneTts } from '@voice/providers';
 export function createPipeline(
   clock: Clock,
   env: Record<string, string | undefined> = {},
-): Pipeline {
+): { pipeline: Pipeline; dialog: Dialog } {
   const ttsKind = env['TTS_PROVIDER'] ?? 'fake-tone';
 
-  return {
+  const llm = new CannedLlm({
+    clock,
+    reply: 'It is sunny and mild in Lisbon today, around twenty two degrees.',
+    ttftMs: 200,
+    interTokenMs: 40,
+  });
+
+  const pipeline: Pipeline = {
     stt: new ScriptedStt({
       clock,
       script: [
@@ -27,15 +35,14 @@ export function createPipeline(
         { afterMs: 600, text: 'what is the weather today', final: true },
       ],
     }),
-    llm: new CannedLlm({
-      clock,
-      reply: 'It is sunny and mild in Lisbon today, around twenty two degrees.',
-      ttftMs: 200,
-      interTokenMs: 40,
-    }),
+    llm,
     tts:
       ttsKind === 'fake-silent'
         ? new SilentTts({ clock, sampleRate: 24_000 })
         : new ToneTts({ clock, sampleRate: 24_000 }),
   };
+
+  // The model sits behind the dialog, not inside the bridge. A more capable decision
+  // engine replaces this line and nothing else.
+  return { pipeline, dialog: new StubDialog({ llm }) };
 }

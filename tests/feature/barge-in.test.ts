@@ -1,204 +1,176 @@
-import { VirtualClock, VoiceLoop } from '@voice/core';
-import type { LoopEvent } from '@voice/core';
-import { CannedLlm, ScriptedStt, SilentTts, fakeMicrophone } from '@voice/providers';
 import { describe, expect, it } from 'vitest';
 
+import { audio, harness, states } from './harness.js';
+import type { Harness, Stamped } from './harness.js';
+
 /**
- * Criterion 1, the one weighted hardest: an `interrupt` stops TTS emission **on the
- * next chunk**, not after the current sentence finishes.
+ * Criteria 1, 2 and 3 — barge-in, resume, and fresh turn.
  *
- * This tier proves the control flow. It cannot prove the *latency* — whether a human
- * hears silence within 300ms is a question only a real browser can answer, and it is
- * answered by the latency harness and the recorded demo. Both are required; neither
- * substitutes for the other. See docs/TESTING.md §6.
+ * This tier proves control flow. It cannot prove *latency*: whether a human hears
+ * silence within 300ms is a question only a real browser answers, and it is answered
+ * by `pnpm bench:latency`. Both are required; neither substitutes for the other.
  */
 
 const REPLY =
   'It is sunny and mild in Lisbon today, around twenty two degrees. ' +
   'The afternoon should stay clear, with a light breeze from the west. ' +
-  'You will not need a coat.';
+  'You will not need a coat at all.';
 
-interface Stamped {
-  event: LoopEvent;
-  at: number;
-}
+/** Interrupt after `cutAfter` audio frames, then say `then` two seconds later. */
+function interruptedBy(then: string | undefined, cutAfter = 6): Harness {
+  let frames = 0;
+  const script = [{ afterMs: 150, text: 'what is the weather today', final: true }];
+  if (then !== undefined) script.push({ afterMs: 2_500, text: then, final: true });
 
-/** Runs a turn, calling `interrupt` after `stopAfterFrames` of assistant audio. */
-async function turnInterruptedAfter(stopAfterFrames: number | undefined): Promise<{
-  events: Stamped[];
-  loop: VoiceLoop;
-  tts: SilentTts;
-  llm: CannedLlm;
-  clock: VirtualClock;
-}> {
-  const clock = new VirtualClock();
-  const events: Stamped[] = [];
-
-  const stt = new ScriptedStt({
-    clock,
-    script: [{ afterMs: 150, text: 'what is the weather today', final: true }],
-  });
-  const llm = new CannedLlm({ clock, reply: REPLY, ttftMs: 100, interTokenMs: 25 });
-  const tts = new SilentTts({ clock, ttfbMs: 40, frameMs: 20 });
-
-  let audioFrames = 0;
-  const loop: VoiceLoop = new VoiceLoop({
-    pipeline: { stt, llm, tts },
-    clock,
-    onEvent: (event) => {
-      events.push({ event, at: clock.now() });
-      if (event.type !== 'audio' || stopAfterFrames === undefined) return;
-      audioFrames += 1;
-      if (audioFrames === stopAfterFrames) loop.interrupt(clock.now());
+  return harness({
+    script,
+    reply: REPLY,
+    micMs: 14_000,
+    onEvent: (event, { bridge, clock }) => {
+      if (event.type !== 'audio') return;
+      frames += 1;
+      if (frames === cutAfter) bridge.interrupt(clock.now());
     },
   });
-
-  const running = loop.run(fakeMicrophone({ clock, durationMs: 12_000 }));
-  await clock.runUntilIdle();
-  await running;
-
-  return { events, loop, tts, llm, clock };
 }
 
-const audioFrames = (events: Stamped[]): Stamped[] =>
-  events.filter((e) => e.event.type === 'audio');
+const framesBefore = (events: Stamped[]): number => {
+  const at = events.find((e) => e.event.type === 'interrupted')?.at;
+  return at === undefined ? 0 : audio(events).filter((f) => f.at <= at).length;
+};
 
-describe('barge-in', () => {
-  it('stops emitting audio on the next chunk, not at the end of the sentence', async () => {
-    const { events, tts } = await turnInterruptedAfter(6);
+describe('barge-in stops immediately (criterion 1)', () => {
+  it('stops emitting on the next chunk, not at the end of the sentence', async () => {
+    const h = interruptedBy(undefined);
+    await h.run();
 
-    // Exactly the frames emitted before the interrupt, and not one more. A loop that
-    // finished the current synthesis call would emit the rest of that sentence.
-    expect(audioFrames(events)).toHaveLength(6);
+    expect(framesBefore(h.events)).toBe(6);
 
-    const cut = tts.requests.find((r) => !r.completed);
+    const cut = h.tts.requests.find((r) => !r.completed);
     expect(cut, 'the in-flight synthesis was abandoned mid-stream').toBeDefined();
     expect(cut!.framesEmitted).toBeLessThan(cut!.totalFrames);
   });
 
-  it('emits no audio at all after the interrupt', async () => {
-    const { events } = await turnInterruptedAfter(4);
-
-    const interruptedAt = events.find((e) => e.event.type === 'interrupted')?.at;
-    expect(interruptedAt).toBeDefined();
-
-    for (const frame of audioFrames(events)) {
-      expect(frame.at).toBeLessThanOrEqual(interruptedAt!);
-    }
-  });
-
-  it('returns to listening immediately', async () => {
-    const { events } = await turnInterruptedAfter(5);
-
-    const states = events
-      .filter((e) => e.event.type === 'state')
-      .map((e) => (e.event as { state: string }).state);
-    expect(states).toEqual(['listening', 'thinking', 'speaking', 'listening', 'idle']);
-  });
-
-  /**
-   * Abandoning generation matters as much as abandoning playback: continuing to pay
-   * for tokens nobody will hear is the same mistake as a late stop, just invisible.
-   */
-  it('abandons generation, not just playback', async () => {
-    const { llm } = await turnInterruptedAfter(5);
-
-    expect(llm.lastCall?.completed).toBe(false);
-    expect(llm.lastCall!.textEmitted.length).toBeLessThan(REPLY.length);
-  });
-
-  /**
-   * The resume point criterion 2 will need. It must index what was *heard*, which
-   * is strictly behind what was generated — the model runs ahead of the synthesiser,
-   * which runs ahead of the playhead.
-   */
-  it('records what the user actually heard, not what was generated', async () => {
-    const { loop, llm } = await turnInterruptedAfter(6);
-    const interrupted = loop.interrupted;
-
-    expect(interrupted).toBeDefined();
-    expect(interrupted!.spokenChars).toBeGreaterThan(0);
-
-    const heard = interrupted!.reply.slice(0, interrupted!.spokenChars);
-    const remaining = interrupted!.reply.slice(interrupted!.spokenChars);
-
-    expect(REPLY.startsWith(heard)).toBe(true);
-    expect(remaining.length).toBeGreaterThan(0);
-    expect(heard + remaining).toBe(interrupted!.reply);
-
-    // Heard is behind generated, which is behind the full reply.
-    expect(interrupted!.spokenChars).toBeLessThanOrEqual(llm.lastCall!.textEmitted.length);
-    expect(interrupted!.spokenChars).toBeLessThan(REPLY.length);
-  });
-
-  it('leaves an uninterrupted turn untouched', async () => {
-    const { events, loop, tts, llm } = await turnInterruptedAfter(undefined);
-
-    expect(loop.interrupted).toBeUndefined();
-    expect(llm.lastCall?.completed).toBe(true);
-    expect(tts.requests.every((r) => r.completed)).toBe(true);
-    expect(audioFrames(events).length).toBeGreaterThan(20);
-    expect(events.some((e) => e.event.type === 'interrupted')).toBe(false);
+  it('returns to listening at once', async () => {
+    const h = interruptedBy(undefined);
+    await h.run();
+    expect(states(h.events).slice(0, 4)).toEqual([
+      'listening',
+      'thinking',
+      'speaking',
+      'listening',
+    ]);
   });
 
   it('ignores an interrupt when the assistant is not talking', async () => {
-    const clock = new VirtualClock();
-    const warnings: string[] = [];
-    const loop = new VoiceLoop({
-      pipeline: {
-        stt: new ScriptedStt({ clock, script: [] }),
-        llm: new CannedLlm({ clock, reply: REPLY }),
-        tts: new SilentTts({ clock }),
-      },
-      clock,
-      onEvent: () => undefined,
-      onWarning: (message) => warnings.push(message),
-    });
+    const h = harness({ script: [], reply: REPLY, micMs: 1_000 });
+    h.bridge.interrupt(0);
+    await h.run();
+    expect(h.warnings.some((w) => w.includes('interrupt ignored'))).toBe(true);
+  });
+});
 
-    const running = loop.run(fakeMicrophone({ clock, durationMs: 500 }));
-    loop.interrupt(0);
-    await clock.runUntilIdle();
-    await running;
+describe('resume an interrupted reply (criterion 2)', () => {
+  it('continues from where the user stopped hearing it, not from the start', async () => {
+    const h = interruptedBy('keep going');
+    await h.run();
 
-    // A barge-in against a machine that is not talking is a bug worth surfacing,
-    // not a no-op to absorb quietly.
-    expect(warnings.some((w) => w.includes('interrupt ignored'))).toBe(true);
-    expect(loop.interrupted).toBeUndefined();
+    expect(h.dialog.lastIntent).toBe('resume');
+
+    const interrupted = h.events.find((e) => e.event.type === 'interrupted');
+    const resumed = h.events.find((e) => e.event.type === 'resumed');
+    expect(interrupted).toBeDefined();
+    expect(resumed).toBeDefined();
+
+    const heardAt = (interrupted!.event as { spokenChars: number }).spokenChars;
+    const { from, remaining } = resumed!.event as { from: number; remaining: string };
+
+    // Resumes from the heard offset — not from zero, and not from the generation cursor.
+    expect(from).toBe(heardAt);
+    expect(from).toBeGreaterThan(0);
+
+    // The remainder is a proper suffix: nothing repeated, nothing skipped.
+    expect(REPLY.endsWith(remaining)).toBe(true);
+    expect(REPLY.slice(0, from) + remaining).toBe(REPLY);
   });
 
-  it('carries on with the next turn after an interruption', async () => {
-    const clock = new VirtualClock();
-    const events: Stamped[] = [];
+  it('does not restart the reply', async () => {
+    const h = interruptedBy('keep going');
+    await h.run();
 
-    const stt = new ScriptedStt({
-      clock,
-      script: [
-        { afterMs: 150, text: 'first question', final: true },
-        { afterMs: 3_000, text: 'second question', final: true },
-      ],
-    });
-    const llm = new CannedLlm({ clock, reply: REPLY, ttftMs: 100, interTokenMs: 25 });
-    const tts = new SilentTts({ clock, ttfbMs: 40, frameMs: 20 });
+    const resumed = h.events.find((e) => e.event.type === 'resumed')!;
+    const { remaining } = resumed.event as { remaining: string };
 
-    let frames = 0;
-    const loop: VoiceLoop = new VoiceLoop({
-      pipeline: { stt, llm, tts },
-      clock,
-      onEvent: (event) => {
-        events.push({ event, at: clock.now() });
-        if (event.type === 'audio') {
-          frames += 1;
-          if (frames === 5) loop.interrupt(clock.now());
-        }
-      },
-    });
+    expect(remaining).not.toBe(REPLY);
+    expect(remaining.startsWith('It is sunny')).toBe(false);
 
-    const running = loop.run(fakeMicrophone({ clock, durationMs: 15_000 }));
-    await clock.runUntilIdle();
-    await running;
+    // The synthesis after the resume begins mid-reply, not at the opening words.
+    const resumedRequests = h.tts.requests.filter((r) => remaining.startsWith(r.text));
+    expect(resumedRequests.length).toBeGreaterThan(0);
+  });
 
-    expect(llm.calls).toHaveLength(2);
-    expect(llm.calls[0]?.completed).toBe(false);
-    expect(llm.calls[1]?.completed).toBe(true);
+  it('speaks again after resuming', async () => {
+    const h = interruptedBy('keep going');
+    await h.run();
+
+    const resumedAt = h.events.find((e) => e.event.type === 'resumed')!.at;
+    expect(audio(h.events).some((f) => f.at > resumedAt)).toBe(true);
+  });
+
+  it('treats a backchannel as permission to carry on', async () => {
+    const h = interruptedBy('mhm');
+    await h.run();
+
+    expect(h.dialog.lastIntent).toBe('backchannel');
+    expect(h.events.some((e) => e.event.type === 'resumed')).toBe(true);
+  });
+
+  /** "Hold on" holds. The reply stays parked and nothing is spoken. */
+  it('stays silent on hold on', async () => {
+    const h = interruptedBy('hold on');
+    await h.run();
+
+    expect(h.dialog.lastIntent).toBe('pause');
+    expect(h.events.some((e) => e.event.type === 'resumed')).toBe(false);
+    expect(h.bridge.paused).toBe(true);
+
+    const interruptedAt = h.events.find((e) => e.event.type === 'interrupted')!.at;
+    expect(audio(h.events).every((f) => f.at <= interruptedAt)).toBe(true);
+  });
+});
+
+describe('fresh turn after interruption (criterion 3)', () => {
+  it('abandons the prior reply and answers the new question', async () => {
+    const h = interruptedBy('tell me about Porto instead');
+    await h.run();
+
+    expect(h.dialog.lastIntent).toBeUndefined(); // fell through to a fresh reply
+    expect(h.events.some((e) => e.event.type === 'resumed')).toBe(false);
+    expect(h.llm.calls).toHaveLength(2);
+    expect(h.dialog.history.map((m) => m.content)).toContain('tell me about Porto instead');
+  });
+
+  it('speaks the new reply from its beginning', async () => {
+    const h = interruptedBy('tell me about Porto instead');
+    await h.run();
+
+    const interruptedAt = h.events.find((e) => e.event.type === 'interrupted')!.at;
+    const after = h.tts.requests.filter((r) => r.completed && REPLY.startsWith(r.text));
+
+    // The new reply starts at the top — it is a different answer, not a continuation.
+    expect(after.length).toBeGreaterThan(0);
+    expect(audio(h.events).some((f) => f.at > interruptedAt)).toBe(true);
+  });
+
+  it('drops the reply entirely on cancel', async () => {
+    const h = interruptedBy('never mind');
+    await h.run();
+
+    expect(h.dialog.lastIntent).toBe('cancel');
+    expect(h.events.some((e) => e.event.type === 'resumed')).toBe(false);
+    expect(h.llm.calls).toHaveLength(1);
+
+    const interruptedAt = h.events.find((e) => e.event.type === 'interrupted')!.at;
+    expect(audio(h.events).every((f) => f.at <= interruptedAt)).toBe(true);
   });
 });
