@@ -92,14 +92,29 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Container serves the app and answers /health
+      - name: Start the container
+        run: docker run -d --name voice -p 8787:8787 voice-conversation:ci
+
+      - name: Wait for it to answer
         run: |
-          docker run -d --name voice -p 8787:8787 voice-conversation:ci
           for i in $(seq 1 30); do
-            if curl -fsS http://localhost:8787/health >/dev/null 2>&1; then break; fi
+            if curl -fsS http://localhost:8787/health >/dev/null 2>&1; then exit 0; fi
             sleep 2
           done
+          echo "container never answered on :8787"; exit 1
+
+      # Always, and before the assertions: a container that fails to boot is
+      # useless to debug without its logs, and the previous version of this step
+      # hid them behind `set -e`.
+      - name: Container logs
+        if: always()
+        run: docker logs voice || true
+
+      - name: Serves the app and reports healthy
+        run: |
           curl -fsS http://localhost:8787/health | tee /dev/stderr | grep -q '"status":"ok"'
           curl -fsS http://localhost:8787/ | grep -qi '<!doctype html'
-          docker logs voice
-          docker rm -f voice
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f voice || true

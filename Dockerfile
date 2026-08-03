@@ -46,4 +46,10 @@ EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["node", "--import", "tsx", "apps/server/src/index.ts"]
+# Started through pnpm rather than `node --import tsx`, and from the package
+# directory rather than the workspace root. pnpm does not hoist, so `tsx` lives in
+# apps/server/node_modules and is not resolvable from /app — the container built
+# fine and then failed to boot, which is exactly the class of problem the CI
+# smoke test exists to catch. Going through the workspace script also means
+# production runs the same command as development.
+CMD ["pnpm", "--filter", "@voice/server", "start"]
