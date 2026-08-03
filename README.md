@@ -319,6 +319,25 @@ pnpm bench:latency     # prints the barge-in number. Never gated in CI
 Open the repo in a Codespace. The devcontainer installs everything and starts both
 halves on attach, so it opens on a running demo rather than on a terminal.
 
+### With Codespaces secrets set
+
+Set `DEEPGRAM_API_KEY` and `ANTHROPIC_API_KEY` as Codespaces secrets and the
+dropdowns become selectable — but the session still **opens on the fakes**:
+
+```
+available: {stt: true, llm: true, tts: true}     ← the UI may offer real
+default:   {stt: fake, llm: fake, tts: fake}     ← what it opens on
+```
+
+That is deliberate, and it is not the same rule the deployment uses. A key present in
+the environment is not consent to spend: `ANTHROPIC_API_KEY` is a common export, and a
+clone that quietly starts billing because a variable happened to be set would be a bad
+default whatever the convenience. Only an explicit `LLM_PROVIDER=anthropic` — which
+`fly.toml` sets and a Codespace does not — is a decision.
+
+So the first turn in a Codespace is an audible tone rather than a voice. Flip the three
+dropdowns to hear the real thing; that swap, done live and mid-session, *is* criterion 7.
+
 ### Prebuilds
 
 Worth enabling, and it is a repository setting rather than a file — GitHub owns the

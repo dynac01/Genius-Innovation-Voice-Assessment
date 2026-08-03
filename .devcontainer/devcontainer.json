@@ -7,6 +7,24 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
+  // Declared, not required. Codespaces prompts for anything listed here that the
+  // person has not already set, which turns "why are the real options greyed out?"
+  // into a question answered before the Codespace exists.
+  //
+  // Nothing breaks without them: the demo runs end to end on fakes, which is the
+  // whole point of building the fakes first. These only decide what the UI is
+  // *allowed* to offer.
+  "secrets": {
+    "DEEPGRAM_API_KEY": {
+      "description": "Optional. Enables real speech-to-text (Nova-3) and text-to-speech (Aura-2). One key covers both. Without it those dropdowns stay on their fakes.",
+      "documentationUrl": "https://console.deepgram.com"
+    },
+    "ANTHROPIC_API_KEY": {
+      "description": "Optional. Enables the real model. Without it the Model dropdown stays on the canned reply.",
+      "documentationUrl": "https://console.anthropic.com"
+    }
+  },
+
   // Split across three lifecycle hooks so a prebuild can actually bake the slow part.
   //
   // Prebuilds run `onCreateCommand` and `updateContentCommand` on push and store the
