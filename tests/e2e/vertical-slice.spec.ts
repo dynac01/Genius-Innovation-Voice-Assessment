@@ -96,6 +96,43 @@ test.describe('vertical slice round trip', () => {
     );
   });
 
+  /**
+   * The bug this guards: availability arrived only in the `ready` message, which
+   * needs an open socket — so before pressing Start the controls claimed "no key"
+   * for every stage regardless of what was configured. The page must ask the
+   * server on load, and must not assert anything before the answer arrives.
+   *
+   * Compared against /api/health rather than hard-coded, so it holds on a machine
+   * with keys and on CI without them.
+   */
+  test('provider controls reflect the server before any session starts', async ({ page }) => {
+    await page.goto('/');
+
+    const truth = await page.evaluate(async () => {
+      const r = await fetch('/api/health');
+      return (await r.json()).pipeline as {
+        default: Record<string, string>;
+        available: Record<string, boolean>;
+      };
+    });
+
+    for (const stage of ['stt', 'llm', 'tts'] as const) {
+      const select = page.getByTestId(`provider-${stage}`);
+      const real = select.locator('option[value="real"]');
+
+      // "no key" appears when, and only when, the server says the key is missing.
+      await expect(real).toHaveText(truth.available[stage] ? /^(?!.*no key).*$/ : /no key/, {
+        timeout: 10_000,
+      });
+      await expect
+        .poll(async () => real.evaluate((o: HTMLOptionElement) => o.disabled))
+        .toBe(!truth.available[stage]);
+
+      // And the control opens on whatever the server is configured to default to.
+      await expect.poll(async () => select.inputValue()).toBe(truth.default[stage]);
+    }
+  });
+
   test('stopping the session releases the microphone', async ({ page }) => {
     await page.goto('/');
     await page.getByTestId('session-toggle').click();

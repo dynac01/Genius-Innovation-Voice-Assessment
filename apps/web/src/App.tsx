@@ -77,7 +77,9 @@ export function App() {
         <h2>Pipeline</h2>
         <div className="stage-grid">
           {STAGES.map((stage) => {
-            const canBeReal = state.available[stage.key];
+            // `undefined` means we have not been told yet — which is not the same
+            // as "no key", and must not be rendered as if it were.
+            const canBeReal = state.available?.[stage.key];
             const active = state.selected?.[stage.key];
             return (
               <label key={stage.key} className="stage">
@@ -89,9 +91,9 @@ export function App() {
                 >
                   <option value="fake">{stage.fake} (fake)</option>
                   {stage.key === 'tts' && <option value="silent">Silent (fake)</option>}
-                  <option value="real" disabled={!canBeReal}>
+                  <option value="real" disabled={canBeReal === false}>
                     {stage.real}
-                    {canBeReal ? '' : ' — no key'}
+                    {canBeReal === false ? ' — no key' : ''}
                   </option>
                 </select>
                 {/* What loaded, not what was asked for. */}

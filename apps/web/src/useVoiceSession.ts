@@ -47,8 +47,14 @@ export interface SessionState {
   connection: SocketStatus;
   /** What the server actually resolved — not necessarily what was requested. */
   selected: PipelineSelection | undefined;
-  /** Which stages the server has keys for. */
-  available: PipelineAvailability;
+  /**
+   * Which stages the server has keys for, or `undefined` until it has told us.
+   *
+   * The distinction matters: "we have not asked yet" is not "there is no key",
+   * and rendering the second when you mean the first tells the user their
+   * configuration is broken when it is fine.
+   */
+  available: PipelineAvailability | undefined;
 }
 
 const INITIAL: SessionState = {
@@ -68,7 +74,7 @@ const INITIAL: SessionState = {
   bargeIns: 0,
   connection: 'closed',
   selected: undefined,
-  available: { stt: false, llm: false, tts: false },
+  available: undefined,
 };
 
 /**
@@ -79,6 +85,13 @@ const INITIAL: SessionState = {
  * and 4 add the parts that make it a conversation.
  */
 const DEFAULT_WANTED: PipelineSelection = { stt: 'fake', llm: 'fake', tts: 'fake' };
+
+interface HealthResponse {
+  readonly pipeline?: {
+    readonly default?: PipelineSelection;
+    readonly available?: PipelineAvailability;
+  };
+}
 
 export function useVoiceSession(): {
   state: SessionState;
@@ -311,6 +324,41 @@ export function useVoiceSession(): {
     },
     [start, stop],
   );
+
+  /**
+   * Ask what the server can offer, before any session exists.
+   *
+   * Availability used to arrive only in the `ready` message, which requires an
+   * open socket — so the controls rendered "no key" for every stage until you
+   * pressed Start, regardless of what was configured. The server has always
+   * published this at /health; nothing was asking.
+   *
+   * The server's own default also seeds the controls, so the app opens configured
+   * the way it was deployed rather than always falling back to fakes.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch('/api/health');
+        if (!response.ok) return;
+        const body = (await response.json()) as HealthResponse;
+        if (cancelled) return;
+        const available = body.pipeline?.available;
+        const preset = body.pipeline?.default;
+        if (available !== undefined) setState((prev) => ({ ...prev, available }));
+        if (preset !== undefined) {
+          setWanted(preset);
+          wantedRef.current = preset;
+        }
+      } catch {
+        // Leave availability unknown rather than asserting a key is missing.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => () => stop(), [stop]);
 
