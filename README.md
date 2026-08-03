@@ -1,6 +1,12 @@
 # Voice Conversation
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/dynac01/Genius-Innovation-Voice-Assessment)
+
 A browser-based, hands-free voice assistant: start a session, talk, and it talks back — and **stops the instant you speak over it**.
+
+One click on that badge gives you a running instance — the container is prebuilt on
+every push, both halves start on attach, and the port is published automatically. No
+keys needed: it runs end to end on the fakes.
 
 The deliverable is not the demo. It is a reusable real-time audio loop with a pluggable STT → LLM → TTS pipeline, sitting behind a fixed dialog protocol. The browser is one way to drive it.
 
@@ -374,6 +380,14 @@ It has to be a script rather than configuration: `portsAttributes` accepts a lab
 an auto-forward behaviour and nothing else — there is no `visibility` key, however much
 it looks like there should be. And the publish has to come *after* the port is
 forwarded, because setting it earlier is silently undone once forwarding catches up.
+
+**A Codespace URL is live, not permanent.** Codespaces stop after
+[30 minutes of inactivity](https://docs.github.com/en/codespaces/setting-your-user-preferences/setting-your-timeout-period-for-github-codespaces)
+by default — and inactivity means *your* absence from the Codespace, not the absence
+of traffic. Someone using the public URL does not keep it awake. The maximum you can
+configure is 240 minutes, so this is the right answer for a live demo or a recording
+session and the wrong one for a link that must answer next week. For that, the
+container deploys anywhere — see [Deployment](#deployment).
 
 **Codespaces secrets are used automatically.** Grant `DEEPGRAM_API_KEY` and
 `ANTHROPIC_API_KEY` and the Codespace opens on the real providers rather than the
