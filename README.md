@@ -363,6 +363,11 @@ Forwarded ports are HTTPS, which makes the page a **secure context** — and tha
 not a detail: `getUserMedia` refuses to run outside one, so this is the reason the
 microphone works in a Codespace at all.
 
+**This is how the demo is reachable.** Port 5173 is forwarded as **public**, so the
+Codespace itself serves the URL — HTTPS with a real certificate, which is the secure
+context `getUserMedia` requires. Send the link to anyone and the microphone works for
+them too. It answers for as long as the Codespace is running.
+
 **Where the UI is.** The devcontainer asks Codespaces to open port 5173
 automatically, but that is a popup and browser-based Codespaces block it silently —
 a running demo with no visible way in. Two reliable routes:
@@ -377,6 +382,10 @@ and `getUserMedia` in it is unreliable — it fails silently rather than prompti
 the microphone simply never opens and nothing says why.
 
 If PORTS is empty, the dev server is not running: open a terminal and `pnpm dev`.
+
+One thing worth knowing rather than discovering: a public port is public. While the
+Codespace runs, anyone with the URL can use it — and with the real providers selected
+that spends your Deepgram and Anthropic credit. Stopping the Codespace stops the URL.
 
 One port is enough. The socket is proxied through the same origin as the page, so
 `wss://<name>-5173.app.github.dev/ws` works and 8787 never needs publishing — a
@@ -396,6 +405,14 @@ allow-list that has quietly become allow-everything fails the build.
 ---
 
 ## Deployment
+
+**The demo is reached through Codespaces** — see [above](#codespaces). Port 5173 is
+forwarded publicly over HTTPS, which is a real certificate and therefore a secure
+context, so the microphone works for anyone with the link.
+
+What follows is the alternative for a URL that outlives a running Codespace. The
+container is built and smoke-tested in CI either way, because it is also the thing
+that proves nothing in the app is host-specific.
 
 One container serving the built app **and** the WebSocket from a single origin. That is not tidiness: a second origin makes the socket cross-origin and puts the demo one CORS or cookie policy away from failing on exactly the mobile browsers it most needs to work on. It also means one certificate and one URL.
 

@@ -54,6 +54,17 @@
   "portsAttributes": {
     "5173": {
       "label": "web (Vite)",
+      // Public, so the forwarded URL is shareable rather than private to whoever
+      // opened the Codespace. This is the access route for the demo: Codespaces
+      // serves forwarded ports over HTTPS with a real certificate, which is the
+      // secure context getUserMedia requires — so the microphone works for anyone
+      // opening the link, not only for the owner.
+      //
+      // Worth knowing rather than discovering: while the Codespace is running,
+      // anyone with the URL can use it, and if the real providers are selected
+      // that spends your Deepgram and Anthropic credit. Stop the Codespace and the
+      // URL stops answering.
+      "visibility": "public",
       // openBrowser, not openPreview. VS Code's embedded preview is a webview, and
       // getUserMedia in it is unreliable at best — for a voice demo that means the
       // microphone never opens and the cause is invisible. A real browser tab is

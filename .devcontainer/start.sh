@@ -18,6 +18,10 @@ if [[ -n "${CODESPACE_NAME:-}" ]]; then
   printf '  ┌──────────────────────────────────────────────────────────────┐\n'
   printf '    Voice demo:  %s\n' "$url"
   printf '\n'
+  printf '    Public and shareable — HTTPS with a real certificate, which is\n'
+  printf '    the secure context the microphone requires. Send this link to\n'
+  printf '    anyone; it answers for as long as this Codespace is running.\n'
+  printf '\n'
   printf '    Open it in a real browser tab. The built-in VS Code preview is\n'
   printf '    a webview and cannot use the microphone, which is the whole\n'
   printf '    demo — it fails silently rather than asking for permission.\n'
