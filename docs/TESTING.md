@@ -1,6 +1,6 @@
 # Voice Conversation — Testing Strategy
 
-**Status:** all four tiers established; unit and feature populated through Phase 1
+**Status:** all four tiers established; unit and feature populated through Phase 3
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [WORKPLAN.md](WORKPLAN.md)
 
@@ -210,8 +210,8 @@ neither substitutes for the other.
 
 | Tier | Status |
 |---|---|
-| Unit | 38 passing — virtual clock, audio primitives, all three fakes |
-| Feature | 4 passing — scripted conversation end to end through the fakes |
+| Unit | 122 passing — clock, audio, wire codec, queue, turn machine, endpointer, chunker, fakes |
+| Feature | 14 passing — scripted conversation, plus the loop's control flow (criteria 4 and 5) |
 | E2E | 1 passing — browser preconditions, no console errors |
 | Latency | harness lands in Phase 4 |
 

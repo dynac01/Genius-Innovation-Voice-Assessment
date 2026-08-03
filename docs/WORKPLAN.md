@@ -1,6 +1,6 @@
 # Voice Conversation — Ordered Work Plan
 
-**Status:** Phases 0–2 complete on desktop. Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
+**Status:** Phases 0–3 complete. Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [TESTING.md](TESTING.md)
 
@@ -113,21 +113,21 @@ handler, `ToneTts` so playback is audible rather than silent) but neither is *ve
 **Goal:** the reusable core — streaming both directions, with turn-taking that doesn't talk over
 the user or cut them off.
 
-- [ ] Loop orchestrator wiring STT → LLM → TTS, driven entirely through the interfaces
-- [ ] Stream LLM output into TTS **incrementally** so speech begins before the reply is complete
+- [x] Loop orchestrator wiring STT → LLM → TTS, driven entirely through the interfaces
+- [x] Stream LLM output into TTS **incrementally** so speech begins before the reply is complete
       *(sentence/clause chunking so TTS gets natural units, not single tokens)*
-- [ ] Stream STT partials to the client so the transcript updates as speech arrives
-- [ ] Running transcript of **both** sides, updating incrementally
-- [ ] Endpointing: end-of-turn detection tuned for ~600–800ms trailing silence, tolerating
+- [x] Stream STT partials to the client so the transcript updates as speech arrives
+- [x] Running transcript of **both** sides, updating incrementally
+- [x] Endpointing: end-of-turn detection tuned for ~600–800ms trailing silence, tolerating
       mid-sentence pauses ([DESIGN.md §4.3](DESIGN.md#43-endpointing-and-barge-in-are-opposite-biased-detectors-on-the-same-mic))
-- [ ] Emit `pause_detected` on the bridge protocol
-- [ ] Turn state machine: `idle → listening → thinking → speaking → idle`
-- [ ] **Unit:** endpoint detector — silence threshold and timing, table-driven
-- [ ] **Unit:** clause chunker — LLM token stream → natural TTS units
-- [ ] **Unit:** turn state machine — legal transitions, and illegal ones rejected
-- [ ] **Feature:** fake STT emits partial → short gap → more speech; assert the assistant waits **(criterion 4)**
-- [ ] **Feature:** TTS receives its first chunk before the LLM stream completes **(criterion 5)**
-- [ ] **Feature:** transcript updates arrive incrementally, not in one batch at the end **(criterion 5)**
+- [x] Emit `pause_detected` on the bridge protocol
+- [x] Turn state machine: `idle → listening → thinking → speaking → idle`
+- [x] **Unit:** endpoint detector — silence threshold and timing, table-driven
+- [x] **Unit:** clause chunker — LLM token stream → natural TTS units
+- [x] **Unit:** turn state machine — legal transitions, and illegal ones rejected
+- [x] **Feature:** fake STT emits partial → short gap → more speech; assert the assistant waits **(criterion 4)**
+- [x] **Feature:** TTS receives its first chunk before the LLM stream completes **(criterion 5)**
+- [x] **Feature:** transcript updates arrive incrementally, not in one batch at the end **(criterion 5)**
 
 **Done when:** a full conversational turn completes end to end on fakes, and criteria 4 and 5
 have passing automated tests.
