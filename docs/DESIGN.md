@@ -225,8 +225,7 @@ assessment grades hardest actually working.
 - [ ] **Deployed URL** with the voice demo working end to end over HTTPS, including microphone
       permission handling. *(Dockerfile, fly.toml and a passing container CI job are in the repo;
       the deploy needs an account — see [WORKPLAN.md](WORKPLAN.md#not-my-work).)*
-- [ ] **Recorded demo (15–30 minutes)** — *not my work; runbook and talking points in
-      [DEMO.md](DEMO.md)*. In two parts:
+- [ ] **Recorded demo (15–30 minutes)** — *not my work*. In two parts:
   - Part 1 — the working system: natural back-and-forth, cutting the assistant off mid-sentence
     and it stopping instantly, resuming an interrupted reply, earcons signalling state, and if
     feasible swapping one pipeline component.

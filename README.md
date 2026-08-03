@@ -364,4 +364,3 @@ Roughly in order of what I would do next:
 | [docs/DESIGN.md](docs/DESIGN.md) | Requirements, the hard problems, decisions and why |
 | [docs/WORKPLAN.md](docs/WORKPLAN.md) | Phase-by-phase build, with what was measured at each |
 | [docs/TESTING.md](docs/TESTING.md) | The four tiers and what each is for |
-| [docs/DEMO.md](docs/DEMO.md) | Runbook and architecture talking points |

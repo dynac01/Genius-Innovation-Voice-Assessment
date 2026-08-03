@@ -21,3 +21,7 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+
+# Personal demo prep — talking points and runbook for the recording, not part of
+# the deliverable. Kept locally, deliberately untracked.
+docs/DEMO.md
