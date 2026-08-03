@@ -202,21 +202,21 @@ function createTts(clock: Clock, env: Env, choice: PipelineSelection['tts']): TT
 /**
  * End-of-turn tuning, which depends on what the STT means by "final".
  *
- * The fakes emit `final` only where a script deliberately says so, which is a
- * statement that the speaker stopped — so it can be trusted. Deepgram emits
- * `speech_final` on its own short silence timer, ~200ms, which is well inside an
- * ordinary mid-sentence pause. Trusting *that* hands the end-of-turn decision to
- * the provider and bypasses this endpointer entirely: the assistant starts
- * answering while you are still mid-thought.
+ * The provider now decides, and that is the right division of labour: Deepgram
+ * emits `final` only on `speech_final` (an 800ms silence) or `UtteranceEnd`
+ * (derived from word timings, so it survives noise), which is a claim that the
+ * speaker stopped — and it is a better-informed claim than ours, because it has
+ * acoustic features we never see.
  *
- * So with a real provider the finals are treated as speech activity rather than a
- * verdict, and the silence window here owns the decision. Deepgram's own ~200ms
- * absorbs part of the wait, which is why the window is shorter than the 700ms
- * default rather than stacked on top of it.
+ * The window here becomes a backstop for the case neither signal arrives at all,
+ * so it sits comfortably beyond both rather than racing them. An earlier version
+ * had this the other way round — a 550ms window competing with a 200ms provider
+ * timer — and the result was an assistant that answered the first half of
+ * sentences.
  */
 function endpointerFor(choice: PipelineSelection['stt']): Partial<EndpointerConfig> {
   return choice === 'real'
-    ? { trustSttFinal: false, endOfTurnMs: 550, pauseMs: 300 }
+    ? { trustSttFinal: true, endOfTurnMs: 2_500, pauseMs: 700 }
     : { trustSttFinal: true };
 }
 

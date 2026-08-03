@@ -133,6 +133,33 @@ test.describe('vertical slice round trip', () => {
     }
   });
 
+  /**
+   * Guards a specific piece of visual noise: completed turns kept their blinking
+   * cursor because nothing cleared `pending` when a reply finished normally, so
+   * a session accumulated one cursor per turn.
+   */
+  test('shows at most one in-progress cursor', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('session-toggle').click();
+
+    await expect(page.getByTestId('turn-assistant').last()).toContainText('sunny', {
+      timeout: 25_000,
+    });
+
+    // Never more than one, at any point while the conversation is running.
+    for (let i = 0; i < 6; i += 1) {
+      expect(
+        await page.locator('.caret').count(),
+        'more than one cursor visible',
+      ).toBeLessThanOrEqual(1);
+      await page.waitForTimeout(400);
+    }
+
+    // And once everything has settled, none at all.
+    await expect(page.getByTestId('turn')).toHaveText('listening', { timeout: 25_000 });
+    await expect.poll(async () => page.locator('.caret').count()).toBe(0);
+  });
+
   test('stopping the session releases the microphone', async ({ page }) => {
     await page.goto('/');
     await page.getByTestId('session-toggle').click();

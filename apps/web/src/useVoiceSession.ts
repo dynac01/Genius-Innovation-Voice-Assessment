@@ -86,6 +86,18 @@ const INITIAL: SessionState = {
  */
 const DEFAULT_WANTED: PipelineSelection = { stt: 'fake', llm: 'fake', tts: 'fake' };
 
+/**
+ * Only the newest line can be in progress.
+ *
+ * Enforced when a line is added rather than hoped for: a turn that never received
+ * its closing signal — a transcript superseded before its final arrived, a reply
+ * cut off — would otherwise keep a blinking cursor for the rest of the session,
+ * and they accumulate.
+ */
+function settleAll(lines: Line[]): Line[] {
+  return lines.map((line) => (line.pending ? { ...line, pending: false } : line));
+}
+
 interface HealthResponse {
   readonly pipeline?: {
     readonly default?: PipelineSelection;
@@ -165,6 +177,12 @@ export function useVoiceSession(): {
             break;
           case 'state':
             if (event.state === 'thinking') newAssistantLineRef.current = true;
+            // A reply that finished normally is no longer in progress. Nothing was
+            // clearing this, so every completed assistant turn kept its cursor and
+            // the page filled up with them.
+            if (event.state === 'listening' || event.state === 'idle') {
+              setState((prev) => ({ ...prev, lines: settleAll(prev.lines) }));
+            }
             // The assistant claims the turn the moment it starts thinking, not
             // when audio appears — otherwise talking over it mid-composition
             // does nothing at all.
@@ -181,6 +199,7 @@ export function useVoiceSession(): {
                 lines[lines.length - 1] = { ...last, text: event.text, pending: !event.final };
               } else {
                 lineIdRef.current += 1;
+                settleAll(lines).forEach((l, i) => (lines[i] = l));
                 lines.push({
                   id: lineIdRef.current,
                   role: 'user',
@@ -204,6 +223,7 @@ export function useVoiceSession(): {
                 lines[lines.length - 1] = { ...last, text: last.text + event.text };
               } else {
                 lineIdRef.current += 1;
+                settleAll(lines).forEach((l, i) => (lines[i] = l));
                 lines.push({
                   id: lineIdRef.current,
                   role: 'assistant',

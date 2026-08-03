@@ -7,19 +7,27 @@ export interface DeepgramSttOptions {
   readonly model?: string;
   readonly language?: string;
   /**
-   * Silence Deepgram waits for before finalising a segment, in ms.
+   * Silence before Deepgram marks a segment `speech_final`, in ms.
    *
-   * Kept low. Our own endpointer owns the end-of-turn decision and is tuned
-   * against it; a provider that also waits a long time would stack its delay on
-   * top of ours and make the assistant feel sluggish for reasons invisible in our
-   * own configuration.
+   * This is the number that decides whether the assistant interrupts you. It was
+   * 200ms, which is shorter than an ordinary pause for breath — so the assistant
+   * answered the first half of sentences. Deepgram's own guidance is that
+   * `speech_final` operates at "tens to hundreds of milliseconds", which is a
+   * *segment* boundary, not a *turn* boundary. A conversational value is most of
+   * a second.
    */
   readonly endpointingMs?: number;
-  /** How long after speech stops Deepgram emits `UtteranceEnd`. */
+  /**
+   * Window for `UtteranceEnd`, in ms. Deepgram documents 1000 as the floor.
+   *
+   * `UtteranceEnd` is derived from word timings rather than raw silence, which is
+   * why it survives background noise that keeps the voice detector busy and stops
+   * `speech_final` ever firing. It is the backstop, not the primary.
+   */
   readonly utteranceEndMs?: number;
 }
 
-interface DeepgramResult {
+interface DeepgramMessage {
   readonly type?: string;
   readonly is_final?: boolean;
   readonly speech_final?: boolean;
@@ -29,15 +37,20 @@ interface DeepgramResult {
 /**
  * Deepgram Nova-3 behind the {@link STT} interface.
  *
- * One mapping decision matters more than the rest of this file:
+ * End of turn follows Deepgram's documented pattern, which needs both signals:
  *
- * **`final` means `speech_final`, not `is_final`.** Deepgram uses two different
- * words for two different claims. `is_final` says "this text is stable, I will not
- * revise it" — which is true many times mid-sentence. `speech_final` says "the
- * speaker stopped." Wiring `final` to `is_final` would end the turn on the first
- * stable clause and cut the user off mid-thought, which is exactly the failure
- * criterion 4 exists to catch. The endpointer's `trustSttFinal` option assumes the
- * stronger claim, so this is where that assumption gets honoured.
+ *   1. a transcript with `speech_final: true`, **or**
+ *   2. an `UtteranceEnd` message with no `speech_final` since the last utterance.
+ *
+ * Using only the first is unreliable, and specifically so: `speech_final` comes
+ * from a voice activity detector, and background noise keeps that detector busy,
+ * so in a noisy room it may never fire at all. `UtteranceEnd` is computed from
+ * word end-times instead, so it survives noise. Handling one and ignoring the
+ * other leaves a turn that never ends, or one that ends too early.
+ *
+ * **`final` means `speech_final`, never `is_final`.** Deepgram uses two words for
+ * two claims: `is_final` says "this text is stable, I will not revise it", which
+ * is true many times mid-sentence; `speech_final` says "the speaker stopped".
  *
  * Deepgram also emits per-segment transcripts rather than a running utterance, so
  * finalised segments are accumulated here and interim text is appended to them —
@@ -67,25 +80,45 @@ export class DeepgramStt implements STT {
 
     const results = new AsyncQueue<{ text: string; final: boolean }>();
     let committed = '';
+    // Tracks whether the voice detector already closed this utterance. If it did,
+    // the UtteranceEnd that follows is redundant and must not end a second turn.
+    let closedBySpeechFinal = false;
+
+    const endTurn = (text: string): void => {
+      const utterance = text.trim();
+      committed = '';
+      closedBySpeechFinal = true;
+      if (utterance !== '') results.push({ text: utterance, final: true });
+    };
 
     socket.on('message', (data: Buffer) => {
-      let parsed: DeepgramResult;
+      let parsed: DeepgramMessage;
       try {
-        parsed = JSON.parse(data.toString()) as DeepgramResult;
+        parsed = JSON.parse(data.toString()) as DeepgramMessage;
       } catch {
         return;
       }
+
+      // The noise-proof backstop. Only acts when the detector did not already
+      // close the utterance — otherwise a quiet room would end every turn twice.
+      if (parsed.type === 'UtteranceEnd') {
+        if (!closedBySpeechFinal) endTurn(committed);
+        return;
+      }
+
       if (parsed.type !== 'Results') return;
 
       const transcript = parsed.channel?.alternatives?.[0]?.transcript ?? '';
       if (transcript === '' && parsed.speech_final !== true) return;
 
       if (parsed.speech_final === true) {
-        const utterance = join(committed, transcript);
-        committed = '';
-        if (utterance !== '') results.push({ text: utterance, final: true });
+        endTurn(join(committed, transcript));
         return;
       }
+
+      // Any real transcript means the speaker is going again, so the next
+      // UtteranceEnd is once more meaningful.
+      if (transcript !== '') closedBySpeechFinal = false;
 
       if (parsed.is_final === true) {
         committed = join(committed, transcript);
@@ -128,6 +161,11 @@ export class DeepgramStt implements STT {
     }
   }
 
+  /** Exposed so the end-of-turn parameters can be asserted without a socket. */
+  listenUrl(sampleRate: number): string {
+    return this.#url(sampleRate);
+  }
+
   #url(sampleRate: number): string {
     const params = new URLSearchParams({
       model: this.#options.model ?? 'nova-3',
@@ -140,8 +178,11 @@ export class DeepgramStt implements STT {
       interim_results: 'true',
       punctuate: 'true',
       smart_format: 'true',
-      endpointing: String(this.#options.endpointingMs ?? 200),
-      utterance_end_ms: String(this.#options.utteranceEndMs ?? 1000),
+      // 800ms, not 200. This single number decides whether the assistant lets you
+      // finish a sentence; a pause for breath is routinely longer than 200ms.
+      endpointing: String(this.#options.endpointingMs ?? 800),
+      // Deepgram documents 1000 as the floor for this window.
+      utterance_end_ms: String(this.#options.utteranceEndMs ?? 1200),
       vad_events: 'true',
     });
     return `wss://api.deepgram.com/v1/listen?${params.toString()}`;

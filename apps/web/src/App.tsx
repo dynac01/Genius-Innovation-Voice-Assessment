@@ -168,7 +168,7 @@ export function App() {
           </p>
         ) : (
           <ol className="turns" data-testid="transcript">
-            {state.lines.map((line) => (
+            {state.lines.map((line, index) => (
               <li
                 key={line.id}
                 className={`turn turn-${line.role}`}
@@ -180,7 +180,9 @@ export function App() {
                 <span className="who">{line.role === 'user' ? 'You' : 'Assistant'}</span>
                 <span className="said">
                   {line.text}
-                  {line.pending && <span className="caret" aria-hidden="true" />}
+                  {line.pending && index === state.lines.length - 1 && (
+                    <span className="caret" aria-hidden="true" />
+                  )}
                   {line.interrupted && <span className="cut"> — interrupted</span>}
                 </span>
               </li>
