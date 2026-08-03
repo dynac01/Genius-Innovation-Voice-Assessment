@@ -7,6 +7,12 @@
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
+  // corepack asks for confirmation before fetching a package manager the first
+  // time. There is nobody to answer during container creation.
+  "containerEnv": {
+    "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0"
+  },
+
   // Declared, not required. Codespaces prompts for anything listed here that the
   // person has not already set, which turns "why are the real options greyed out?"
   // into a question answered before the Codespace exists.
@@ -34,7 +40,15 @@
   //
   // corepack reads the pnpm version from the `packageManager` field in package.json,
   // so it is not repeated here. One source of truth, shared with CI.
-  "onCreateCommand": "corepack enable",
+  // `sudo`, because lifecycle commands run as the remote user (`node`) and corepack
+  // symlinks into root-owned /usr/local/bin. Without it the command fails with a
+  // bare EACCES, the whole create step aborts, and Codespaces silently drops you
+  // into a recovery container with none of the project set up — a failure that
+  // looks nothing like its cause.
+  //
+  // Falls back to a plain call so this still works on an image where the user can
+  // already write there and sudo may not exist.
+  "onCreateCommand": "sudo corepack enable || corepack enable",
 
   // Baked by the prebuild, and re-run when a prebuild is refreshed against newer
   // source — which is exactly the property `pnpm install` wants. Frozen, so a
