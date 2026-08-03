@@ -162,21 +162,28 @@ export class AudioEngine {
 
       // Run the detector before forwarding. Barge-in is decided here, in the
       // browser, because the round trip alone would exhaust the latency budget.
-      // Two different questions. The echo guard cares whether sound is actually
-      // coming out of the speaker; the turn race cares whether the assistant has
-      // claimed the turn at all. Only the first is about audio.
+      // Three different questions, and conflating any two of them causes a real
+      // failure. The echo guard cares whether sound is coming out of the speaker.
+      // The turn race cares whether the assistant has claimed the turn *and*
+      // whether it is audible — because a reply being composed and a reply being
+      // spoken warrant very different amounts of evidence before abandoning them.
       const audible = this.outputActive;
       this.#vad.setOutputActive(audible);
       this.#vad.process(pcm, frameMs);
-
-      const assistantClaimsTurn = audible || this.#assistantActive;
 
       // Contention is a level, not an edge. Watching only for a rising edge on
       // user speech catches the assistant-first ordering and silently misses the
       // other one: a user who was already mid-sentence when the assistant started
       // produces no edge, so the assistant would talk straight over them. See
       // StartRace in @voice/core.
-      if (this.#race.observe(assistantClaimsTurn, this.#vad.speaking) === 'yield') {
+      const contest = this.#race.observe({
+        assistantAudible: audible,
+        assistantThinking: !audible && this.#assistantActive,
+        userSpeaking: this.#vad.speaking,
+        frameMs,
+      });
+
+      if (contest === 'yield') {
         const silentAt = this.flush();
         this.#lastBargeIn = {
           detectToSilent: Math.max(0, (silentAt - capturedAt) * 1000),
