@@ -42,8 +42,10 @@
   "updateContentCommand": "pnpm install --frozen-lockfile",
 
   // Start both halves on attach, so a Codespace opens on a running demo rather than
-  // on a terminal and a README. `pnpm dev` runs the Nest server and Vite together.
-  "postAttachCommand": "pnpm dev",
+  // on a terminal and a README. The wrapper also prints the forwarded URL, because
+  // `onAutoForward: openBrowser` is a popup and browser-based Codespaces block it
+  // silently — leaving a running demo with no visible way in.
+  "postAttachCommand": "bash .devcontainer/start.sh",
 
   // Codespaces serves forwarded ports over HTTPS, which makes the page a secure
   // context — the precondition for getUserMedia. This is what lets the microphone

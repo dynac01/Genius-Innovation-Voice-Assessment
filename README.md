@@ -363,10 +363,20 @@ Forwarded ports are HTTPS, which makes the page a **secure context** — and tha
 not a detail: `getUserMedia` refuses to run outside one, so this is the reason the
 microphone works in a Codespace at all.
 
-**Open port 5173 in a real browser tab**, not VS Code's built-in preview. That
-preview is a webview and `getUserMedia` in it is unreliable, which presents as a
-microphone that never opens and no clue why. The devcontainer is set to
-`openBrowser` for exactly that reason.
+**Where the UI is.** The devcontainer asks Codespaces to open port 5173
+automatically, but that is a popup and browser-based Codespaces block it silently —
+a running demo with no visible way in. Two reliable routes:
+
+- The **PORTS** tab, next to TERMINAL at the bottom. Find `web (Vite)` on 5173 and
+  click the globe icon (*Open in Browser*).
+- Or the URL printed in the terminal when the Codespace starts:
+  `https://<codespace-name>-5173.app.github.dev`
+
+**Use a real browser tab, not VS Code's built-in preview.** That preview is a webview
+and `getUserMedia` in it is unreliable — it fails silently rather than prompting, so
+the microphone simply never opens and nothing says why.
+
+If PORTS is empty, the dev server is not running: open a terminal and `pnpm dev`.
 
 One port is enough. The socket is proxied through the same origin as the page, so
 `wss://<name>-5173.app.github.dev/ws` works and 8787 never needs publishing — a
