@@ -107,12 +107,33 @@ export class StartRace {
   readonly #config: StartRaceConfig;
   #contended = false;
   #sustainedMs = 0;
+  #claimed = false;
 
   constructor(config: Partial<StartRaceConfig> = {}) {
     this.#config = { ...DEFAULT_START_RACE, ...config };
   }
 
   observe(input: StartRaceInput): StartRaceOutcome {
+    /*
+     * The confirmation window is measured from the start of the *contest*, not from
+     * the start of the user's speech. That distinction is the whole guard, and
+     * getting it wrong made the guard decorative.
+     *
+     * The counter used to accumulate for as long as the detector said "speaking",
+     * regardless of whether there was anything to contend with. By the time the
+     * assistant claimed a turn the user had, of course, just been talking — that is
+     * what produced the turn — so the counter was already far past the threshold and
+     * the very next frame yielded. A log caught it exactly: the assistant began
+     * thinking, and 14ms later the reply was abandoned having spoken 0 characters.
+     *
+     * The question worth asking is not "has this person been talking?" but "have
+     * they *kept* talking now that the assistant has started?". So the clock starts
+     * when the assistant claims the turn.
+     */
+    const claimed = input.assistantAudible || input.assistantThinking;
+    if (claimed && !this.#claimed) this.#sustainedMs = 0;
+    this.#claimed = claimed;
+
     if (!input.userSpeaking) {
       this.#contended = false;
       this.#sustainedMs = 0;
@@ -141,6 +162,7 @@ export class StartRace {
   reset(): void {
     this.#contended = false;
     this.#sustainedMs = 0;
+    this.#claimed = false;
   }
 
   /** Fires once per contest — re-yielding every frame would stop the assistant recovering. */

@@ -256,3 +256,63 @@ describe('claimFrom', () => {
     );
   });
 });
+
+/**
+ * Regression: the confirmation window has to start when the contest does.
+ *
+ * From a session log. The user finished speaking, the transcript finalised, the
+ * assistant began thinking — and 14ms later the reply was abandoned having spoken
+ * zero characters. The 400ms guard was in the code and did nothing, because the
+ * counter it consults had been accumulating since the user first opened their
+ * mouth. By the time there was anything to contend with it was already saturated.
+ *
+ * This is the failure mode a guard is *most* likely to have: present, plausible,
+ * and inert. Every turn arrives immediately after the user has been talking, so
+ * the pre-loaded counter is not an edge case — it is every single turn.
+ */
+describe('StartRace confirmation window', () => {
+  const frame = (over: 'audible' | 'thinking', speaking = true): StartRaceInput => ({
+    assistantAudible: over === 'audible',
+    assistantThinking: over === 'thinking',
+    userSpeaking: speaking,
+    frameMs: 20,
+  });
+
+  it('does not spend a reply on speech that predates the assistant claiming a turn', () => {
+    const race = new StartRace();
+
+    // Two full seconds of the user talking. No assistant, no contest, nothing to
+    // abandon — exactly the run of speech that produces a turn in the first place.
+    for (let i = 0; i < 100; i += 1) {
+      expect(race.observe({ ...frame('thinking'), assistantThinking: false })).toBe('none');
+    }
+
+    // The assistant claims the turn. The guard must begin here, not in the past.
+    expect(race.observe(frame('thinking')), 'yielded on the first contended frame').toBe('none');
+  });
+
+  it('still yields once the user keeps talking through the claim', () => {
+    const race = new StartRace();
+    for (let i = 0; i < 100; i += 1) {
+      race.observe({ ...frame('thinking'), assistantThinking: false });
+    }
+
+    const outcomes: string[] = [];
+    for (let i = 0; i < 40; i += 1) outcomes.push(race.observe(frame('thinking')));
+
+    expect(outcomes).toContain('yield');
+    expect((outcomes.indexOf('yield') + 1) * 20).toBeGreaterThanOrEqual(
+      DEFAULT_START_RACE.confirmWhileSilentMs,
+    );
+  });
+
+  it('leaves audible replies on the instant rule, where the evidence is the detector', () => {
+    const race = new StartRace();
+    for (let i = 0; i < 100; i += 1) {
+      race.observe({ ...frame('audible'), assistantAudible: false });
+    }
+    // Nothing to prove here: by the time the detector reports speech at all it has
+    // already required a quarter second of it, and there is sound being talked over.
+    expect(race.observe(frame('audible'))).toBe('yield');
+  });
+});

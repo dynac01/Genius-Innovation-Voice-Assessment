@@ -40,7 +40,9 @@ Point at the transcript updating **while you are still speaking**. That is crite
 
 Ask something that produces a longer answer, then **talk over it about two seconds in**.
 
-Then say the number out loud: **`Barge-in stop` shows real milliseconds**, read off the audio clock. Typically 70–78 ms against a 300 ms target. This is the criterion weighted hardest — do not let it go by as a detail.
+Then say the number out loud: **`Barge-in stop` shows real milliseconds**, read off the audio clock. Typically 271 ms against a 300 ms target. This is the criterion weighted hardest — do not let it go by as a detail.
+
+If asked why it is not faster: it was, and the number was dishonest. A 50 ms onset guard buys a headline figure by firing on anything, and a session log showed the cost — a detector reporting 4.3 s of "speech" that a real speech model, on the same microphone, transcribed as nothing. Reference pipelines use a 250 ms minimum-duration guard and credit it with removing 60–80% of false barge-ins. The stop is slower and it is now measuring what it claims to measure.
 
 Do it twice. Once is a demo; twice is a system.
 
@@ -107,10 +109,10 @@ Show the budget:
 
 | Stage | ms |
 |---|---|
-| VAD onset evidence | 50 |
+| VAD onset guard | 250 |
 | Frame period + dispatch | 8–16 |
 | Gain ramp | 12 |
-| **Total** | **70–78** |
+| **Total** | **271** |
 
 Two details worth a sentence each:
 
@@ -123,7 +125,7 @@ And the one that separates orderings: **contention is a level, not an edge.** If
 
 **Claim:** endpointing and barge-in are opposite-biased detectors on the same microphone, so they cannot share tuning.
 
-- Barge-in: 50 ms onset, biased toward firing — a late stop is the failure everyone hears
+- Barge-in: 250 ms sustained onset, still biased toward firing relative to endpointing — a late stop is the failure everyone hears, but a false one destroys a reply
 - Endpointing: 700 ms trailing silence, biased against firing — cutting someone off mid-thought is worse than a beat of delay
 
 The case that proves it: a partial, a 400 ms gap, then more speech. A detector that failed to re-arm ends the turn at 900 ms — mid-sentence. This one ends it at 1300 ms, 700 ms after the *resumed* speech.
@@ -170,7 +172,7 @@ The README has six, ordered. The first two are the ones to say out loud:
 
 ```bash
 pnpm dev                 # server + web
-pnpm test                # 317 unit + feature, ~1s, no keys
+pnpm test                # 322 unit + feature, ~1s, no keys
 pnpm test:e2e            # 14 in a real browser
 pnpm bench:latency       # prints the barge-in number
 
@@ -179,8 +181,8 @@ git show b397115 --stat -- packages/core/     # criterion 7: empty
 
 | Number | Value |
 |---|---|
-| Barge-in stop | 70–78 ms (target < 300) |
+| Barge-in stop | 271 ms (target < 300) |
 | End of turn → first audio, real providers | 1228–2040 ms (target < 2000) |
 | Model TTFT, warm | 565–1332 ms |
 | TTS TTFB, warm | 416–477 ms |
-| Tests | 317 unit + feature, 14 e2e |
+| Tests | 322 unit + feature, 14 e2e |

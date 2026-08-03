@@ -17,6 +17,25 @@ function tone(db: number, samples = SAMPLES): Int16Array {
 
 const silence = (samples = SAMPLES) => new Int16Array(samples);
 
+/**
+ * Levels a real microphone actually produces.
+ *
+ * These tests used to settle the floor on digital silence — which drives it toward
+ * -95 dBFS, a level no room reaches — and then call -88 dBFS "speech". That is not
+ * a voice by any measure, and encoding it as one is precisely how the detector came
+ * to treat room tone as talking. A quiet room sits near -55 dBFS; a person at a
+ * normal distance clears -30.
+ */
+const ROOM_DB = -55;
+const SPEECH_DB = -25;
+/** Above the room, below a voice: the level the echo guard has to reject. */
+const MURMUR_DB = -35;
+
+/** Settle the floor on a realistic room rather than on absolute silence. */
+function settle(vad: Vad, frames = 40): void {
+  feed(vad, () => tone(ROOM_DB), frames);
+}
+
 /** Feed n frames, returning every non-'none' event with its frame index. */
 function feed(vad: Vad, frame: () => Int16Array, count: number): Array<[number, string]> {
   const events: Array<[number, string]> = [];
@@ -76,8 +95,8 @@ describe('Vad', () => {
 
   it('releases only after sustained quiet', () => {
     const vad = new Vad({ releaseMs: 250 });
-    feed(vad, silence, 30);
-    feed(vad, () => tone(-20), 10);
+    settle(vad, 30);
+    feed(vad, () => tone(SPEECH_DB), 14); // 280ms — clears the 250ms onset guard
     expect(vad.speaking).toBe(true);
 
     const events = feed(vad, silence, 20);
@@ -88,21 +107,53 @@ describe('Vad', () => {
   /** Word gaps are shorter than the release window, so they must not chatter. */
   it('does not chatter across gaps between words', () => {
     const vad = new Vad({ releaseMs: 250 });
-    feed(vad, silence, 30);
+    settle(vad, 30);
 
     const events: string[] = [];
     for (let word = 0; word < 4; word += 1) {
-      for (const [, e] of feed(vad, () => tone(-20), 8)) events.push(e);
-      for (const [, e] of feed(vad, silence, 5)) events.push(e); // 100ms gap
+      for (const [, e] of feed(vad, () => tone(SPEECH_DB), 14)) events.push(e);
+      for (const [, e] of feed(vad, () => tone(ROOM_DB), 5)) events.push(e); // 100ms gap
     }
     expect(events).toEqual(['speech_start']);
   });
 
   it('ignores audio that is merely above silence but not above the floor', () => {
-    const vad = new Vad({ thresholdDb: 9 });
-    feed(vad, silence, 40);
-    const floor = vad.noiseFloorDb;
-    expect(feed(vad, () => tone(floor + 4), 10)).toEqual([]);
+    const vad = new Vad();
+    settle(vad);
+    expect(feed(vad, () => tone(ROOM_DB + 4), 20)).toEqual([]);
+  });
+
+  /**
+   * The regression, stated directly.
+   *
+   * A session log recorded five separate speech runs totalling ~4.3 seconds during
+   * which Deepgram — listening to the very same microphone — transcribed nothing.
+   * The detector was reporting a room as a person, and each of those reports could
+   * destroy a reply.
+   *
+   * The cause was a purely adaptive threshold. In a quiet room the tracked floor
+   * falls toward silence, and a fixed margin above near-silence is still
+   * near-silence, so ambient tone clears a bar that has quietly descended to meet
+   * it. The absolute gate is what stops the room from redefining a voice.
+   */
+  it('does not mistake a quiet room for a person', () => {
+    const vad = new Vad();
+    // A long settle drives the adaptive floor as low as it will go — the exact
+    // condition under which the old detector became hair-trigger.
+    feed(vad, silence, 200);
+    expect(vad.noiseFloorDb).toBeLessThan(ROOM_DB);
+
+    // Ambient room tone, well above that collapsed floor and nowhere near a voice.
+    expect(feed(vad, () => tone(ROOM_DB), 100)).toEqual([]);
+    expect(vad.speaking).toBe(false);
+  });
+
+  it('needs a quarter second of voice, not a click', () => {
+    const vad = new Vad();
+    settle(vad);
+    // A door, a cough, a chair: loud enough, nowhere near long enough.
+    expect(feed(vad, () => tone(SPEECH_DB), 8)).toEqual([]);
+    expect(vad.speaking).toBe(false);
   });
 
   /**
@@ -111,24 +162,24 @@ describe('Vad', () => {
    * which looks like barge-in working *too* well and is maddening to diagnose.
    */
   it('raises the bar while the assistant is audible', () => {
-    const quiet = new Vad({ thresholdDb: 9, duckedThresholdDb: 16 });
-    feed(quiet, silence, 40);
-    const level = quiet.noiseFloorDb + 12;
+    const quiet = new Vad();
+    settle(quiet);
+    // A murmur counts as speech in a silent room...
+    expect(feed(quiet, () => tone(MURMUR_DB), 20).some(([, e]) => e === 'speech_start')).toBe(true);
 
-    // Loud enough to be speech when nothing is playing.
-    expect(feed(quiet, () => tone(level), 10).some(([, e]) => e === 'speech_start')).toBe(true);
-
-    const ducked = new Vad({ thresholdDb: 9, duckedThresholdDb: 16 });
-    feed(ducked, silence, 40);
+    // ...and must not while the assistant is talking, because at that level it is
+    // far more likely to be the assistant's own voice coming back in.
+    const ducked = new Vad();
+    settle(ducked);
     ducked.setOutputActive(true);
-    expect(feed(ducked, () => tone(level), 10)).toEqual([]);
+    expect(feed(ducked, () => tone(MURMUR_DB), 20)).toEqual([]);
   });
 
   it('still yields to genuinely loud speech over the assistant', () => {
-    const vad = new Vad({ duckedThresholdDb: 16 });
-    feed(vad, silence, 40);
+    const vad = new Vad();
+    settle(vad);
     vad.setOutputActive(true);
-    const events = feed(vad, () => tone(vad.noiseFloorDb + 25), 10);
+    const events = feed(vad, () => tone(SPEECH_DB), 20);
     expect(events.some(([, e]) => e === 'speech_start')).toBe(true);
   });
 
@@ -156,16 +207,15 @@ describe('Vad', () => {
 
   it('does not let sustained speech drag the floor above itself', () => {
     const vad = new Vad();
-    feed(vad, silence, 40);
-    const floor = vad.noiseFloorDb;
-    feed(vad, () => tone(floor + 20), 100);
+    settle(vad);
+    feed(vad, () => tone(SPEECH_DB), 100);
     expect(vad.speaking).toBe(true);
   });
 
   it('resets to a clean slate', () => {
     const vad = new Vad();
-    feed(vad, silence, 30);
-    feed(vad, () => tone(-20), 10);
+    settle(vad, 30);
+    feed(vad, () => tone(SPEECH_DB), 14);
     expect(vad.speaking).toBe(true);
 
     vad.reset();

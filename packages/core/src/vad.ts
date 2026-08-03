@@ -8,18 +8,69 @@
  * silences output locally; the server round trip only decides what the
  * interruption **meant**. Two paths, and only the slow one is allowed to be slow.
  *
- * The bias here is the opposite of the endpointer's. A late stop is the failure
- * everyone hears, so onset is deliberately twitchy — 50ms — and release is slow, to
- * avoid chattering on the gaps between words.
+ * The bias here is the opposite of the endpointer's: a late stop is the failure
+ * everyone hears, so release is slow and the detector leans toward firing.
+ *
+ * ## Leaning toward firing is not the same as firing at anything
+ *
+ * It was, and a session log settled the argument. Across one conversation the
+ * detector reported five separate speech runs totalling ~4.3 seconds during which
+ * Deepgram — a real speech model, on the same microphone, in the same room —
+ * transcribed nothing whatsoever. Those were not quiet words it missed. They were
+ * a room, and this detector called them speech.
+ *
+ * The cost was not a stray metric. Every one of those runs could abandon a reply,
+ * and several did: replies destroyed before a sample was audible, transcripts
+ * scrolling past, and an assistant that appeared to have simply stopped talking.
+ *
+ * The published stack for this is three layers, and this had one and a half:
+ *
+ *   1. **Energy gate** — an absolute floor, around -40 dBFS in reference designs.
+ *   2. **Voice classifier** — Silero or a small CNN, confidence above ~0.7.
+ *   3. **Minimum-duration guard** — 200-300ms of sustained voice, which is credited
+ *      with removing 60-80% of false barge-ins on its own.
+ *
+ * Layers 1 and 3 are here now. Layer 2 is not: a neural classifier means shipping
+ * an ONNX runtime and a model into the browser, and that is a change worth making
+ * deliberately rather than while chasing a bug. It is the honest next step, and it
+ * is named as one in the README rather than quietly skipped.
+ *
+ * What layer 1 fixes is subtle and was the actual defect. The threshold was
+ * *purely* adaptive — N dB above a tracked noise floor — which sounds robust and
+ * is the opposite in a quiet room: the floor tracks down toward silence, and a
+ * fixed margin above near-silence is still near-silence. An absolute gate is what
+ * stops a quiet room from redefining what counts as a voice.
  */
 
 export interface VadConfig {
-  /** Speech-ish audio needed before declaring onset. Short: a late stop is worse. */
+  /**
+   * Sustained speech required before declaring onset — the minimum-duration guard.
+   *
+   * This was 50ms, chosen to keep the measured barge-in number small, and it is the
+   * single reason a cough, a chair, or a breath could destroy a reply. Reference
+   * pipelines use 250ms and credit the guard alone with removing 60-80% of false
+   * barge-ins.
+   *
+   * It costs real latency and the trade is worth stating plainly: stopping moves
+   * from ~74ms after voice onset to a measured 271ms, against the brief's ~300ms target. The
+   * old number was only ever achievable because the detector fired on anything, so
+   * it was not measuring what it appeared to measure.
+   */
   readonly onsetMs: number;
   /** Quiet needed before declaring speech over. Long enough to span word gaps. */
   readonly releaseMs: number;
   /** dB above the noise floor that counts as speech. */
   readonly thresholdDb: number;
+  /**
+   * Absolute level below which nothing is speech, whatever the noise floor says.
+   *
+   * The backstop for the adaptive threshold. In a quiet room the tracked floor
+   * falls toward silence and a fixed margin above it admits room tone as a voice;
+   * a real speaker at a normal distance clears -40 dBFS comfortably. Both
+   * conditions must hold, so the adaptive part can still *raise* the bar in a noisy
+   * room without ever being able to lower it below this.
+   */
+  readonly absoluteGateDb: number;
   /**
    * dB above the floor required while the assistant is talking.
    *
@@ -37,10 +88,11 @@ export interface VadConfig {
 }
 
 export const DEFAULT_VAD: VadConfig = {
-  onsetMs: 50,
+  onsetMs: 250,
   releaseMs: 250,
-  thresholdDb: 9,
-  duckedThresholdDb: 16,
+  thresholdDb: 12,
+  absoluteGateDb: -40,
+  duckedThresholdDb: 24,
   floorFallPerFrameDb: 1.0,
   floorRisePerFrameDb: 0.08,
 };
@@ -105,7 +157,12 @@ export class Vad {
     const threshold = this.#outputActive
       ? this.#config.duckedThresholdDb
       : this.#config.thresholdDb;
-    const isSpeech = level > this.#floorDb + threshold;
+    /*
+     * Both gates, not either. The adaptive one keeps the detector working in a
+     * noisy room by raising the bar; the absolute one stops a quiet room from
+     * lowering it, which is how room tone came to be treated as a voice.
+     */
+    const isSpeech = level > this.#floorDb + threshold && level > this.#config.absoluteGateDb;
 
     if (!isSpeech && !this.#outputActive) this.#adaptFloor(level);
 

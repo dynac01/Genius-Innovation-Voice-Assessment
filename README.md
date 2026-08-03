@@ -104,7 +104,7 @@ One addition worth flagging: `AudioChunk` carries an optional `TextSpan`. The br
 
 | Measurement | Target | **Measured** | Method |
 |---|---|---|---|
-| **Barge-in stop** — user speech onset → assistant audio silent | **< 300 ms** | **70–78 ms** | `pnpm bench:latency`, real Chromium, both endpoints read from the audio clock |
+| **Barge-in stop** — user speech onset → assistant audio silent | **< 300 ms** | **271 ms** | `pnpm bench:latency`, real Chromium, both endpoints read from the audio clock |
 | **Response** — end of turn → first assistant audio *(real providers)* | **< 2000 ms** | **1228–2040 ms** | Server-side probe, warm connections |
 | Response *(fakes)* | — | ~550 ms | e2e |
 | Model time-to-first-token — Haiku 4.5, warm | — | 565–1332 ms | provider probe |
@@ -114,10 +114,10 @@ One addition worth flagging: `AudioChunk` carries an optional `TextSpan`. The br
 
 | Stage | ms | |
 |---|---|---|
-| VAD onset evidence | 50 | configured |
+| VAD onset guard | 250 | configured |
 | Frame period + dispatch | 8–16 | measured |
 | Gain ramp to zero | 12 | configured |
-| **Total** | **70–78** | **measured, four runs** |
+| **Total** | **271** | **measured** |
 
 The 120 ms jitter buffer never appears in that budget — buffered audio is *discarded*, not played out, so it costs queue depth rather than stop latency.
 
@@ -139,12 +139,12 @@ One known, unfixed cost: **the first request of a process pays ~4 s of TLS and c
 |---|---|---|
 | End-of-turn silence | 700 ms | Above conversational hesitation (200–500 ms), below where a reply feels sluggish |
 | Pause reported | 300 ms | Told to the dialog as information; does **not** end the turn |
-| VAD onset | 50 ms | Biased to fire — a late stop is the failure everyone hears |
+| VAD onset | 250 ms | Minimum-duration guard. Was 50 ms, which bought a fast headline number by firing on doors, chairs and room tone |
 | VAD release | 250 ms | Long enough to span the gaps between words |
 | Speech threshold | 9 dB over noise floor | |
 | Threshold while assistant audible | 16 dB | Echo guard — see [Tradeoffs](#tradeoffs) |
 
-**Endpointing and barge-in are opposite-biased detectors on the same microphone.** One wants ~50 ms of onset and errs toward firing; the other wants most of a second of silence and errs against it. They cannot share tuning, so they do not share code.
+**Endpointing and barge-in are opposite-biased detectors on the same microphone.** One wants a quarter second of sustained voice and errs toward firing; the other wants most of a second of silence and errs against it. They cannot share tuning, so they do not share code.
 
 ---
 
@@ -227,7 +227,7 @@ So `AudioChunk` carries the character span it renders, and the bridge tracks the
 Four tiers. Full rationale in [docs/TESTING.md](docs/TESTING.md).
 
 ```bash
-pnpm test              # 317 tests — unit + feature. ~1s, no browser, no keys
+pnpm test              # 322 tests — unit + feature. ~1s, no browser, no keys
 pnpm check             # + typecheck, lint, format. What CI runs
 
 pnpm test:e2e:install  # once — downloads Chromium
@@ -313,12 +313,20 @@ Nothing in the app is host-specific — it is one container listening on one por
 
 Roughly in order of what I would do next:
 
-1. **Pre-warm provider connections at session start.** The ~4 s first-request TLS cost lands on the first turn of every cold server. It is the single largest latency win available and is not hard.
-2. **Verify and tune the echo guard on a real speakerphone.** The largest untested assumption in the highest-weighted criterion. If `duckedThresholdDb` is wrong, the assistant interrupts itself — which reads as barge-in working *too* well and is maddening to diagnose.
-3. **Adaptive endpointing.** 700 ms is a fixed compromise. Using the STT's own acoustic signals — Deepgram already sends `UtteranceEnd` and VAD events we currently ignore — would let it end faster after a clear stop and wait longer after a trailing conjunction.
-4. **Resume across a re-synthesis boundary.** Resume re-synthesises the remaining text, so the voice restarts mid-clause with a fresh prosodic contour. Audible if you listen for it. Splicing at a word boundary would hide it.
-5. **A real dialog engine.** The protocol is honoured and the stub is deliberately simple — intent classification is a phrase table. That is the right place to put a model, and the seam is already there.
-6. **Per-session provider instances with backpressure.** Each connection currently builds its own pipeline; under load that wants pooling and a queue rather than unbounded sockets.
+1. **A neural VAD in the browser — Silero or a small CNN.** The published stack for
+   barge-in is three layers: an absolute energy gate, a *voice classifier* at
+   confidence > 0.7, and a 200–300 ms minimum-duration guard. Layers one and three
+   are here; the classifier is not, and it is the layer that distinguishes a voice
+   from a door. Energy plus duration is a real improvement over energy alone — a
+   session log showed the difference starkly — but it still cannot tell a person
+   from a fan, and only the classifier can. It means shipping an ONNX runtime and a
+   ~2 MB model, which is why it is the next deliberate change rather than a patch.
+2. **Pre-warm provider connections at session start.** The ~4 s first-request TLS cost lands on the first turn of every cold server. It is the single largest latency win available and is not hard.
+3. **Verify and tune the echo guard on a real speakerphone.** The largest untested assumption in the highest-weighted criterion. If `duckedThresholdDb` is wrong, the assistant interrupts itself — which reads as barge-in working *too* well and is maddening to diagnose.
+4. **Adaptive endpointing.** 700 ms is a fixed compromise. Using the STT's own acoustic signals — Deepgram already sends `UtteranceEnd` and VAD events we currently ignore — would let it end faster after a clear stop and wait longer after a trailing conjunction.
+5. **Resume across a re-synthesis boundary.** Resume re-synthesises the remaining text, so the voice restarts mid-clause with a fresh prosodic contour. Audible if you listen for it. Splicing at a word boundary would hide it.
+6. **A real dialog engine.** The protocol is honoured and the stub is deliberately simple — intent classification is a phrase table. That is the right place to put a model, and the seam is already there.
+7. **Per-session provider instances with backpressure.** Each connection currently builds its own pipeline; under load that wants pooling and a queue rather than unbounded sockets.
 
 ---
 
