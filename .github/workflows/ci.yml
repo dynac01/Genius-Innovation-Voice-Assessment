@@ -67,12 +67,20 @@ jobs:
           done
 
           host=fictional-space-guide-5173.app.github.dev
-          page=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $host" http://localhost:5173/)
-          api=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $host" http://localhost:5173/api/health)
-          upgrade=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $host" \
+
+          # `|| true` on every probe, because the assertion is the HTTP code and not
+          # curl's exit status — and Actions runs this under `bash -e`, where the two
+          # get conflated. The websocket case is the one that bites: a successful
+          # upgrade leaves the connection open, so curl reports 101 and then exits 28
+          # when --max-time elapses. Without this the step fails on its own success.
+          probe() { curl -s -o /dev/null -w '%{http_code}' "$@" || true; }
+
+          page=$(probe -H "Host: $host" http://localhost:5173/)
+          api=$(probe -H "Host: $host" http://localhost:5173/api/health)
+          upgrade=$(probe -H "Host: $host" \
             -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
             -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' --max-time 5 http://localhost:5173/ws)
-          blocked=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example.com' http://localhost:5173/)
+          blocked=$(probe -H 'Host: evil.example.com' http://localhost:5173/)
 
           echo "page=$page api=$api ws-upgrade=$upgrade unknown-host=$blocked"
           [ "$page" = 200 ]     || { echo 'Codespaces host rejected — see server.allowedHosts'; cat /tmp/dev.log; exit 1; }
