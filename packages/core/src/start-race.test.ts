@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { StartRace } from './start-race.js';
+import { DEFAULT_START_RACE, StartRace, claimFrom } from './start-race.js';
 import type { StartRaceInput } from './start-race.js';
 
 const FRAME = 20;
@@ -147,5 +147,112 @@ describe('StartRace — totality', () => {
     race.reset();
     expect(race.contended).toBe(false);
     expect(race.observe(speaking('audible'))).toBe('yield');
+  });
+});
+
+/**
+ * Regression: a reply that has been queued but has not made a sound.
+ *
+ * These cases come from a real session log, not from imagination. The browser held
+ * one flag meaning "audio is scheduled" and passed it as `assistantAudible`, so the
+ * ~120ms window between queueing a reply and hearing it was judged by the rule
+ * meant for a reply already in the air — yield instantly, demand no confirmation.
+ *
+ * With a detector still latched from the user's own trailing speech, the result was
+ * total and repeating: every reply abandoned in the millisecond it was queued, one
+ * character spoken, nothing ever audible, and a transcript that looked healthy
+ * throughout. Both turns in that log failed this way.
+ */
+describe('claimFrom', () => {
+  const speakingUser = { userSpeaking: true, frameMs: 20 };
+
+  it('treats queued-but-silent audio as thinking, not as speech', () => {
+    expect(claimFrom({ scheduled: true, playing: false, composing: true })).toEqual({
+      audible: false,
+      thinking: true,
+    });
+  });
+
+  it('treats audio that has started as audible', () => {
+    expect(claimFrom({ scheduled: true, playing: true, composing: false })).toEqual({
+      audible: true,
+      thinking: false,
+    });
+  });
+
+  it('still claims the turn once the queue has drained but generation continues', () => {
+    expect(claimFrom({ scheduled: false, playing: false, composing: true })).toEqual({
+      audible: false,
+      thinking: true,
+    });
+  });
+
+  it('claims nothing when the assistant is idle', () => {
+    expect(claimFrom({ scheduled: false, playing: false, composing: false })).toEqual({
+      audible: false,
+      thinking: false,
+    });
+  });
+
+  it('does not abandon a just-queued reply to a detector that is already latched', () => {
+    const race = new StartRace();
+    const queued = claimFrom({ scheduled: true, playing: false, composing: true });
+
+    // The jitter buffer, frame by frame. Nothing has reached the speaker yet, so
+    // nothing is being talked over and the reply must survive.
+    for (let elapsed = 0; elapsed < 120; elapsed += 20) {
+      expect(
+        race.observe({
+          assistantAudible: queued.audible,
+          assistantThinking: queued.thinking,
+          ...speakingUser,
+        }),
+        `yielded ${elapsed}ms in, before a single sample was audible`,
+      ).toBe('none');
+    }
+  });
+
+  it('yields the moment that same reply becomes audible', () => {
+    const race = new StartRace();
+    const queued = claimFrom({ scheduled: true, playing: false, composing: true });
+    for (let elapsed = 0; elapsed < 120; elapsed += 20) {
+      race.observe({
+        assistantAudible: queued.audible,
+        assistantThinking: queued.thinking,
+        ...speakingUser,
+      });
+    }
+
+    const playing = claimFrom({ scheduled: true, playing: true, composing: false });
+    expect(
+      race.observe({
+        assistantAudible: playing.audible,
+        assistantThinking: playing.thinking,
+        ...speakingUser,
+      }),
+    ).toBe('yield');
+  });
+
+  it('abandons a silent reply once speech has sustained itself', () => {
+    const race = new StartRace();
+    const queued = claimFrom({ scheduled: true, playing: false, composing: true });
+    const outcomes: string[] = [];
+    for (let elapsed = 0; elapsed < 600; elapsed += 20) {
+      outcomes.push(
+        race.observe({
+          assistantAudible: queued.audible,
+          assistantThinking: queued.thinking,
+          ...speakingUser,
+        }),
+      );
+    }
+    // Deliberate: the guard delays the decision, it does not remove it. Someone who
+    // genuinely keeps talking still gets the turn.
+    expect(outcomes).toContain('yield');
+    // The frame that fires is the one *completing* the confirmation window, so the
+    // speech it has observed is (index + 1) frames long.
+    expect((outcomes.indexOf('yield') + 1) * 20).toBeGreaterThanOrEqual(
+      DEFAULT_START_RACE.confirmWhileSilentMs,
+    );
   });
 });

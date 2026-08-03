@@ -37,8 +37,13 @@ export { DEFAULT_ENDPOINTER, Endpointer } from './endpointer.js';
 export type { ChunkerConfig } from './chunker.js';
 export { ClauseChunker, DEFAULT_CHUNKER } from './chunker.js';
 
-export type { StartRaceConfig, StartRaceInput, StartRaceOutcome } from './start-race.js';
-export { DEFAULT_START_RACE, StartRace } from './start-race.js';
+export type {
+  AssistantAudio,
+  StartRaceConfig,
+  StartRaceInput,
+  StartRaceOutcome,
+} from './start-race.js';
+export { DEFAULT_START_RACE, StartRace, claimFrom } from './start-race.js';
 
 export type { IdleTimeoutOptions } from './timeout.js';
 export { ProviderStallError, withIdleTimeout } from './timeout.js';

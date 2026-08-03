@@ -227,7 +227,7 @@ So `AudioChunk` carries the character span it renders, and the bridge tracks the
 Four tiers. Full rationale in [docs/TESTING.md](docs/TESTING.md).
 
 ```bash
-pnpm test              # 310 tests — unit + feature. ~1s, no browser, no keys
+pnpm test              # 317 tests — unit + feature. ~1s, no browser, no keys
 pnpm check             # + typecheck, lint, format. What CI runs
 
 pnpm test:e2e:install  # once — downloads Chromium

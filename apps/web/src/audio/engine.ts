@@ -9,7 +9,7 @@
  * docs/TESTING.md §2.
  */
 
-import { DEFAULT_VAD, StartRace, Vad } from '@voice/core';
+import { DEFAULT_VAD, StartRace, Vad, claimFrom } from '@voice/core';
 import type { EarconSound } from '@voice/core';
 
 import { EarconPlayer } from './earcons.js';
@@ -105,6 +105,7 @@ export class AudioEngine {
   #meter: AnalyserNode | undefined;
   #log: ((kind: string, data?: unknown) => void) | undefined;
   #playCount = 0;
+  #wasSpeaking = false;
   #meterFrame: Float32Array<ArrayBuffer> | undefined;
   #lastBargeIn: BargeInMeasurement | undefined;
 
@@ -120,9 +121,44 @@ export class AudioEngine {
     return this.#lastBargeIn;
   }
 
-  /** True while assistant audio is scheduled at or ahead of the playhead. */
+  /**
+   * True while assistant audio is scheduled at or ahead of the playhead.
+   *
+   * Includes audio that has been queued but has not started yet, which is what the
+   * echo guard wants: by the time the speaker is producing sound it is too late to
+   * start being careful about hearing it.
+   */
   get outputActive(): boolean {
     return this.bufferedAheadMs > 0;
+  }
+
+  /**
+   * True only while sound is genuinely coming out of the speaker.
+   *
+   * Not the same question as {@link outputActive}, and conflating them cost a real
+   * failure. Audio is scheduled a jitter buffer ahead of the playhead, so for the
+   * first 120ms of every reply there is audio *queued* and absolute silence in the
+   * room. Treating that window as "the assistant is speaking" hands it to the
+   * barge-in rule that yields instantly and without confirmation — and that rule is
+   * only justified when there is sound to talk over, because its whole premise is
+   * that a late stop is the failure everyone hears.
+   *
+   * The consequence when the premise is false is severe and self-sustaining: a user
+   * whose detector is latched — still trailing off, or a room the threshold reads as
+   * speech — kills every reply in the millisecond it is queued, before a sample
+   * exists. The transcript fills in, the reply is abandoned after one character, and
+   * nothing is ever heard. That is not a hypothetical; it is what a session log
+   * showed, twice in one conversation.
+   *
+   * So the queued-but-silent window counts as *thinking*, where the assistant has
+   * claimed the turn but produced no sound, and the rule there already requires
+   * speech to sustain itself before a reply is thrown away.
+   */
+  get outputAudible(): boolean {
+    const context = this.#context;
+    if (context === undefined) return false;
+    const now = context.currentTime;
+    return this.#scheduled.some((entry) => entry.startedAt <= now && entry.endsAt > now);
   }
 
   /**
@@ -182,16 +218,46 @@ export class AudioEngine {
     capture.port.onmessage = (event: MessageEvent<{ pcm: Int16Array; capturedAt: number }>) => {
       const { pcm, capturedAt } = event.data;
 
-      // Run the detector before forwarding. Barge-in is decided here, in the
-      // browser, because the round trip alone would exhaust the latency budget.
-      // Three different questions, and conflating any two of them causes a real
-      // failure. The echo guard cares whether sound is coming out of the speaker.
-      // The turn race cares whether the assistant has claimed the turn *and*
-      // whether it is audible — because a reply being composed and a reply being
-      // spoken warrant very different amounts of evidence before abandoning them.
-      const audible = this.outputActive;
-      this.#vad.setOutputActive(audible);
+      /*
+       * Run the detector before forwarding. Barge-in is decided here, in the
+       * browser, because the round trip alone would exhaust the latency budget.
+       *
+       * Three questions, and each wants a different answer to "is the assistant
+       * speaking":
+       *
+       * - The **echo guard** wants `scheduled`. It must already be cautious by the
+       *   time sound arrives, so it counts audio that is merely queued.
+       * - The **turn race** wants `audible`. It decides whether to throw a reply
+       *   away, and the rule that yields instantly is only justified when there is
+       *   sound to talk over.
+       * - Everything queued but not yet playing is **thinking**: the turn is
+       *   claimed, the room is silent, and speech must sustain itself before the
+       *   reply is abandoned.
+       *
+       * Using one flag for all three is what let a latched detector destroy every
+       * reply in the millisecond it was queued.
+       */
+      const scheduled = this.outputActive;
+      const claim = claimFrom({
+        scheduled,
+        playing: this.outputAudible,
+        composing: this.#assistantActive,
+      });
+      const audible = claim.audible;
+      this.#vad.setOutputActive(scheduled);
       this.#vad.process(pcm, frameMs);
+
+      if (this.#vad.speaking !== this.#wasSpeaking) {
+        this.#wasSpeaking = this.#vad.speaking;
+        // Logged because "was the user actually talking?" is the question every
+        // disputed barge-in turns on, and it is unanswerable after the fact.
+        this.#log?.('vad.speaking', {
+          speaking: this.#vad.speaking,
+          assistantScheduled: scheduled,
+          assistantAudible: audible,
+          assistantActive: this.#assistantActive,
+        });
+      }
 
       // Contention is a level, not an edge. Watching only for a rising edge on
       // user speech catches the assistant-first ordering and silently misses the
@@ -199,13 +265,14 @@ export class AudioEngine {
       // produces no edge, so the assistant would talk straight over them. See
       // StartRace in @voice/core.
       const contest = this.#race.observe({
-        assistantAudible: audible,
-        assistantThinking: !audible && this.#assistantActive,
+        assistantAudible: claim.audible,
+        assistantThinking: claim.thinking,
         userSpeaking: this.#vad.speaking,
         frameMs,
       });
 
       if (contest === 'yield') {
+        this.#log?.('audio.yield', { audible, scheduled, thinking: this.#assistantActive });
         const silentAt = this.flush();
         this.#lastBargeIn = {
           detectToSilent: Math.max(0, (silentAt - capturedAt) * 1000),

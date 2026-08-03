@@ -42,6 +42,45 @@
 
 export type StartRaceOutcome = 'none' | 'yield';
 
+/**
+ * What the audio path knows about the assistant, before it has been interpreted.
+ *
+ * Three separate facts, because a playback queue makes "is the assistant speaking"
+ * ambiguous in a way that matters. Audio is scheduled ahead of the playhead, so
+ * there is always a window — one jitter buffer wide — in which a reply is fully
+ * committed and the room is still silent.
+ */
+export interface AssistantAudio {
+  /** Audio is queued at or ahead of the playhead. */
+  readonly scheduled: boolean;
+  /** Audio has actually started: sound is leaving the speaker now. */
+  readonly playing: boolean;
+  /** The turn is claimed and a reply is being generated. */
+  readonly composing: boolean;
+}
+
+/**
+ * Collapse the audio state into the two claims {@link StartRace} weighs.
+ *
+ * Pure, and in core, because it is a *decision* rather than plumbing — and because
+ * getting it wrong in the browser cost a session where every reply was destroyed
+ * one millisecond after it was queued. The engine had a single `outputActive` flag
+ * meaning "something is scheduled", and passed it as `assistantAudible`. That flag
+ * is true throughout the silent jitter-buffer window, so a reply that had made no
+ * sound at all was judged by the rule reserved for one that had.
+ *
+ * The rule reserved for audible replies yields instantly and demands no
+ * confirmation, and it is right to: a late stop is the failure everyone hears. But
+ * its entire premise is that there is sound to talk over. Applied to a silent
+ * reply, the premise is false and only the cost survives — and the cost is total,
+ * because a detector that stays latched kills every reply at the instant it is
+ * queued, forever, while the transcript scrolls on as if nothing were wrong.
+ */
+export function claimFrom(audio: AssistantAudio): { audible: boolean; thinking: boolean } {
+  if (audio.playing) return { audible: true, thinking: false };
+  return { audible: false, thinking: audio.scheduled || audio.composing };
+}
+
 export interface StartRaceConfig {
   /**
    * Sustained user speech required to abandon a reply that is not yet audible.

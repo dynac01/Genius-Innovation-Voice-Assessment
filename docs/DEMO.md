@@ -170,7 +170,7 @@ The README has six, ordered. The first two are the ones to say out loud:
 
 ```bash
 pnpm dev                 # server + web
-pnpm test                # 310 unit + feature, ~1s, no keys
+pnpm test                # 317 unit + feature, ~1s, no keys
 pnpm test:e2e            # 14 in a real browser
 pnpm bench:latency       # prints the barge-in number
 
@@ -183,4 +183,4 @@ git show b397115 --stat -- packages/core/     # criterion 7: empty
 | End of turn → first audio, real providers | 1228–2040 ms (target < 2000) |
 | Model TTFT, warm | 565–1332 ms |
 | TTS TTFB, warm | 416–477 ms |
-| Tests | 310 unit + feature, 14 e2e |
+| Tests | 317 unit + feature, 14 e2e |
