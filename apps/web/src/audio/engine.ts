@@ -10,6 +10,9 @@
  */
 
 import { DEFAULT_VAD, Vad } from '@voice/core';
+import type { EarconSound } from '@voice/core';
+
+import { EarconPlayer } from './earcons.js';
 
 /** Requested capture rate. Most browsers honour it; we report whatever we get. */
 const PREFERRED_SAMPLE_RATE = 16_000;
@@ -87,6 +90,7 @@ export class AudioEngine {
   #scheduled: Scheduled[] = [];
   #nextStartAt = 0;
   readonly #vad = new Vad();
+  #earcons: EarconPlayer | undefined;
   #lastBargeIn: BargeInMeasurement | undefined;
 
   get sampleRate(): number {
@@ -172,12 +176,24 @@ export class AudioEngine {
     capture.connect(sink);
     sink.connect(context.destination);
 
+    this.#earcons = new EarconPlayer(context);
+
     this.#context = context;
     this.#stream = stream;
     this.#capture = capture;
     this.#sink = sink;
     this.#output = output;
     this.#nextStartAt = 0;
+  }
+
+  /**
+   * Play a state sound.
+   *
+   * Routed through its own node, parallel to speech, so it can neither be silenced
+   * by a barge-in ramp nor duck the reply it plays over.
+   */
+  playEarcon(sound: EarconSound): void {
+    this.#earcons?.play(sound);
   }
 
   /** Queue a frame of assistant audio behind whatever is already scheduled. */
@@ -261,6 +277,7 @@ export class AudioEngine {
     this.#capture?.disconnect();
     this.#sink?.disconnect();
     this.#output?.disconnect();
+    this.#earcons?.disconnect();
     for (const track of this.#stream?.getTracks() ?? []) track.stop();
     await this.#context?.close();
 
@@ -269,6 +286,7 @@ export class AudioEngine {
     this.#capture = undefined;
     this.#sink = undefined;
     this.#output = undefined;
+    this.#earcons = undefined;
     this.#scheduled = [];
     this.#nextStartAt = 0;
   }

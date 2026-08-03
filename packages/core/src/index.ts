@@ -40,6 +40,9 @@ export { ClauseChunker, DEFAULT_CHUNKER } from './chunker.js';
 export type { VadConfig, VadEvent } from './vad.js';
 export { DEFAULT_VAD, Vad, frameLevelDb } from './vad.js';
 
+export type { EarconSpec, EarconTone } from './earcons.js';
+export { EARCONS, EARCON_MAX_MS, EARCON_SOUNDS, earconDurationMs, earconPeak } from './earcons.js';
+
 export type { UtteranceIntent } from './intent.js';
 export { bargeInFor, classifyUtterance, normalizeUtterance } from './intent.js';
 

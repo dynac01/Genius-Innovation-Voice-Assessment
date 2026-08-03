@@ -21,6 +21,8 @@ export interface HarnessOptions {
   pauseMs?: number;
   ttftMs?: number;
   interTokenMs?: number;
+  /** Make the model fail mid-reply, standing in for a provider hiccup. */
+  failAfterTokens?: number;
   /** Called on every event, so a test can interrupt at a chosen moment. */
   onEvent?: (event: BridgeEvent, ctx: { bridge: AudioBridge; clock: VirtualClock }) => void;
 }
@@ -47,6 +49,7 @@ export function harness(options: HarnessOptions): Harness {
     reply: options.reply,
     ttftMs: options.ttftMs ?? 100,
     interTokenMs: options.interTokenMs ?? 25,
+    ...(options.failAfterTokens === undefined ? {} : { failAfterTokens: options.failAfterTokens }),
   });
   const tts = new SilentTts({ clock, ttfbMs: 40, frameMs: 20 });
   const pipeline: Pipeline = { stt, llm, tts };

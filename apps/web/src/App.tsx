@@ -114,7 +114,8 @@ export function App() {
           <span data-testid="assistant-text">{state.assistantText || '…'}</span>
         </p>
         <p className="muted small">
-          Last earcon: <span data-testid="last-earcon">{state.lastEarcon ?? '—'}</span>
+          Last earcon: <span data-testid="last-earcon">{state.lastEarcon ?? '—'}</span> (
+          <span data-testid="earcon-count">{state.earconCount}</span> played)
         </p>
       </section>
     </main>

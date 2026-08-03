@@ -1,6 +1,6 @@
 # Voice Conversation — Testing Strategy
 
-**Status:** all four tiers populated through Phase 5; latency harness reporting real numbers
+**Status:** all four tiers populated through Phase 6; latency harness reporting real numbers
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [WORKPLAN.md](WORKPLAN.md)
 
@@ -210,8 +210,8 @@ neither substitutes for the other.
 
 | Tier | Status |
 |---|---|
-| Unit | 187 passing — clock, audio, wire codec, queue, turn machine, endpointer, chunker, VAD, intent classifier, fakes |
-| Feature | 26 passing — bridge control flow (criteria 4, 5), barge-in / resume / fresh turn (criteria 1, 2, 3) |
+| Unit | 205 passing — clock, audio, wire codec, queue, turn machine, endpointer, chunker, VAD, intent classifier, earcon specs, fakes |
+| Feature | 33 passing — bridge control flow (4, 5), barge-in / resume / fresh turn (1, 2, 3), earcons (6) |
 | E2E | 1 passing — browser preconditions, no console errors |
 | Latency | `pnpm bench:latency` — barge-in stop **70–78ms**, target <300ms |
 

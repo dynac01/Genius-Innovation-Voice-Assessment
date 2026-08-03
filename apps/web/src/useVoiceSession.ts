@@ -15,6 +15,7 @@ export interface SessionState {
   userText: string;
   assistantText: string;
   lastEarcon: string | undefined;
+  earconCount: number;
   sampleRate: number;
   framesSent: number;
   framesReceived: number;
@@ -34,6 +35,7 @@ const INITIAL: SessionState = {
   userText: '',
   assistantText: '',
   lastEarcon: undefined,
+  earconCount: 0,
   sampleRate: 0,
   framesSent: 0,
   framesReceived: 0,
@@ -111,7 +113,12 @@ export function useVoiceSession(): {
             setState((prev) => ({ ...prev, assistantText: prev.assistantText + event.text }));
             break;
           case 'earcon':
-            setState((prev) => ({ ...prev, lastEarcon: event.sound }));
+            engine.playEarcon(event.sound);
+            setState((prev) => ({
+              ...prev,
+              lastEarcon: event.sound,
+              earconCount: prev.earconCount + 1,
+            }));
             break;
           case 'flush_audio':
             engine.flush();

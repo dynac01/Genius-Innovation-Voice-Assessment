@@ -54,6 +54,16 @@ test.describe('vertical slice round trip', () => {
     // A latency number exists to record — Phase 2 asks for a measured baseline.
     await expect(page.getByTestId('response-latency')).not.toHaveText('—');
 
+    // Earcons actually reached the audio graph rather than merely being logged.
+    // Their *shape* is asserted in the unit tier; what a browser adds is proof that
+    // Web Audio accepted them without throwing.
+    await expect
+      .poll(async () => Number(await page.getByTestId('earcon-count').innerText()), {
+        timeout: 20_000,
+      })
+      .toBeGreaterThanOrEqual(3);
+    await expect(page.getByTestId('last-earcon')).toHaveText('ready');
+
     expect(consoleErrors, 'page produced console errors').toEqual([]);
   });
 

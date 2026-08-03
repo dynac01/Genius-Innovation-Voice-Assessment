@@ -8,6 +8,15 @@ export interface CannedLlmOptions {
   readonly ttftMs?: number;
   /** Gap between tokens thereafter. */
   readonly interTokenMs?: number;
+  /**
+   * Throw after this many tokens, standing in for a provider hiccup mid-reply.
+   *
+   * The brief asks that such a hiccup surface as a failed earcon rather than a
+   * hang, so the failure has to be reproducible on demand — and it has to happen
+   * *mid-stream*, because failing before the first token is a different and much
+   * easier case.
+   */
+  readonly failAfterTokens?: number;
 }
 
 /** What one `respond` call was asked, and how far it got. */
@@ -42,12 +51,14 @@ export class CannedLlm implements LLM {
   readonly #reply: string;
   readonly #ttftMs: number;
   readonly #interTokenMs: number;
+  readonly #failAfterTokens: number | undefined;
 
   constructor(options: CannedLlmOptions) {
     this.#clock = options.clock;
     this.#reply = options.reply;
     this.#ttftMs = options.ttftMs ?? 120;
     this.#interTokenMs = options.interTokenMs ?? 20;
+    this.#failAfterTokens = options.failAfterTokens;
   }
 
   get lastCall(): LlmCall | undefined {
@@ -67,6 +78,9 @@ export class CannedLlm implements LLM {
     await this.#clock.sleep(this.#ttftMs);
     for (const [index, token] of tokens.entries()) {
       if (index > 0) await this.#clock.sleep(this.#interTokenMs);
+      if (this.#failAfterTokens !== undefined && index >= this.#failAfterTokens) {
+        throw new Error('provider hiccup: upstream connection reset');
+      }
       call.tokensEmitted += 1;
       call.textEmitted += token;
       yield { text: token };

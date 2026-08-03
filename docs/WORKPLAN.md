@@ -1,6 +1,6 @@
 # Voice Conversation — Ordered Work Plan
 
-**Status:** Phases 0–5 complete. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
+**Status:** Phases 0–6 complete. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [TESTING.md](TESTING.md)
 
@@ -249,17 +249,26 @@ never discarded.
 
 **Goal:** state signalled without words, without ever stepping on speech.
 
-- [ ] Client-side Web Audio synthesis (oscillator-based) on a **separate gain node**, mixed with
+- [x] Client-side Web Audio synthesis (oscillator-based) on a **separate gain node**, mixed with
       speech — zero network round-trip, and structurally incapable of clobbering the voice
-- [ ] Four sounds, each **under half a second**: `listening` (faint tone), `accepted` (soft blip),
+- [x] Four sounds, each **under half a second**: `listening` (faint tone), `accepted` (soft blip),
       `ready` (gentle chime), `failed` (descending tone)
-- [ ] Server sends the `earcon` protocol event; the client renders it
-- [ ] Wire each to its actual event — listening on capture start, and the rest on theirs
-- [ ] Tune for "non-fatiguing": low volume, short, distinct from each other
-- [ ] **Unit:** earcon event selection — which sound for which loop event
-- [ ] **Feature:** earcon events are emitted at the right points in the loop **(criterion 6)**
+- [x] Server sends the `earcon` protocol event; the client renders it
+- [x] Wire each to its actual event — listening on capture start, and the rest on theirs
+- [x] Tune for "non-fatiguing": low volume, short, distinct from each other
+- [x] **Unit:** earcon event selection — which sound for which loop event
+- [x] **Feature:** earcon events are emitted at the right points in the loop **(criterion 6)**
 
 **Done when:** all four fire at the right moments and none cuts off or garbles assistant speech.
+
+**Split:** the *shape* of each sound is data in `packages/core/src/earcons.ts`, asserted against
+the brief's requirements — under 500ms, quiet enough to sit under speech, every tone ramped in
+and out, all four distinct, failure descending. Only the oscillator wiring lives in the browser,
+and it carries no decisions, so the spec cannot drift from what the tests check.
+
+**Non-clobbering is structural, not timed.** Earcons are mixed on their own gain node, parallel
+to speech — never through it. A barge-in ramp cannot silence a `failed` tone, and a `ready` chime
+cannot duck the reply behind it. There is nothing to tune and nothing to get wrong.
 
 ---
 
