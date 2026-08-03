@@ -363,10 +363,25 @@ Forwarded ports are HTTPS, which makes the page a **secure context** — and tha
 not a detail: `getUserMedia` refuses to run outside one, so this is the reason the
 microphone works in a Codespace at all.
 
-**This is how the demo is reachable.** Port 5173 is forwarded as **public**, so the
-Codespace itself serves the URL — HTTPS with a real certificate, which is the secure
-context `getUserMedia` requires. Send the link to anyone and the microphone works for
-them too. It answers for as long as the Codespace is running.
+**This is how the demo is reachable.** On attach, `.devcontainer/start.sh` starts both
+halves, waits for the web server to listen, then publishes port 5173 with
+`gh codespace ports visibility 5173:public`. The Codespace itself serves the URL —
+HTTPS with a real certificate, which is the secure context `getUserMedia` requires.
+Send the link to anyone and the microphone works for them too. It answers for as long
+as the Codespace is running.
+
+It has to be a script rather than configuration: `portsAttributes` accepts a label and
+an auto-forward behaviour and nothing else — there is no `visibility` key, however much
+it looks like there should be. And the publish has to come *after* the port is
+forwarded, because setting it earlier is silently undone once forwarding catches up.
+
+**Codespaces secrets are used automatically.** Grant `DEEPGRAM_API_KEY` and
+`ANTHROPIC_API_KEY` and the Codespace opens on the real providers rather than the
+fakes — each stage independently, so with only the Deepgram key you get real speech in
+and out and a canned reply. This is scoped to Codespaces on purpose: a key sitting in
+an environment is not a decision to spend it, and a local clone that started billing
+because a variable happened to be exported would be a bad default. Granting a secret to
+*this repository* is a decision; an ambient variable is not.
 
 **Where the UI is.** The devcontainer asks Codespaces to open port 5173
 automatically, but that is a popup and browser-based Codespaces block it silently —
