@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { CannedLlm, ScriptedStt, SilentTts, SystemClock, ToneTts } from '@voice/providers';
+import {
+  AnthropicLlm,
+  CannedLlm,
+  DeepgramStt,
+  DeepgramTts,
+  ScriptedStt,
+  SilentTts,
+  SystemClock,
+  ToneTts,
+} from '@voice/providers';
 import { createPipeline, describePipeline } from './pipeline.js';
 
 const clock = new SystemClock();
@@ -86,6 +95,26 @@ describe('pipeline selection', () => {
     expect(() => createPipeline(clock, { STT_PROVIDER: 'deepgram', DEEPGRAM_API_KEY: '' })).toThrow(
       /required/,
     );
+  });
+
+  /**
+   * Silence is the STT's normal state, not a stall: Deepgram sends nothing at all
+   * while nobody is talking. An idle budget there would turn a thoughtful pause
+   * into a failed earcon and a dead session — the precise opposite of criterion 8.
+   * The request-shaped stages, which were asked a question, still get one.
+   */
+  it('does not put an idle budget on the STT', () => {
+    const guarded = createPipeline(clock, {
+      ...KEYS,
+      STT_PROVIDER: 'deepgram',
+      LLM_PROVIDER: 'anthropic',
+      TTS_PROVIDER: 'deepgram',
+    }).pipeline;
+
+    // The STT is handed through unwrapped; the others are decorated.
+    expect(guarded.stt).toBeInstanceOf(DeepgramStt);
+    expect(guarded.llm).not.toBeInstanceOf(AnthropicLlm);
+    expect(guarded.tts).not.toBeInstanceOf(DeepgramTts);
   });
 
   it('reports what is wired up', () => {

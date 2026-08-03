@@ -43,21 +43,18 @@ export type Env = Record<string, string | undefined>;
  * stays open while the provider quietly stops sending. Without them the loop waits
  * forever and the user just sees an assistant with nothing to say.
  *
- * Not applied to the fakes: they are deterministic, and a budget there would only
- * add a way for a slow CI machine to fail a test.
+ * **Only the request-shaped stages get one.** The LLM and TTS are called per
+ * reply: silence from either means something is wrong, because they were asked a
+ * question. The STT is a session-long stream where silence is the *normal* state —
+ * it means nobody is talking. Deepgram sends literally nothing during silence, so
+ * an STT budget turns "the user paused to think" into a failed earcon and a dead
+ * session, which is the precise opposite of criterion 8's requirement that
+ * sustained silence produce no spurious response.
+ *
+ * Not applied to the fakes either: they are deterministic, and a budget there
+ * would only add a way for a slow CI machine to fail a test.
  */
-const IDLE_BUDGET_MS = { stt: 15_000, llm: 8_000, tts: 8_000 } as const;
-
-function guardStt(stt: STT, clock: Clock, label: string): STT {
-  return {
-    transcribeStream: (audio: AudioStream) =>
-      withIdleTimeout(stt.transcribeStream(audio), {
-        clock,
-        idleMs: IDLE_BUDGET_MS.stt,
-        label,
-      }),
-  };
-}
+const IDLE_BUDGET_MS = { llm: 8_000, tts: 8_000 } as const;
 
 function guardLlm(llm: LLM, clock: Clock, label: string): LLM {
   return {
@@ -98,11 +95,11 @@ function required(env: Env, name: string, provider: string): string {
 function createStt(clock: Clock, env: Env): STT {
   switch (env['STT_PROVIDER'] ?? 'fake') {
     case 'deepgram':
-      return guardStt(
-        new DeepgramStt({ apiKey: required(env, 'DEEPGRAM_API_KEY', 'STT_PROVIDER=deepgram') }),
-        clock,
-        'deepgram-stt',
-      );
+      // Deliberately unguarded — see IDLE_BUDGET_MS. A dead STT socket surfaces
+      // as a close or an error, both of which already propagate.
+      return new DeepgramStt({
+        apiKey: required(env, 'DEEPGRAM_API_KEY', 'STT_PROVIDER=deepgram'),
+      });
     default:
       return new ScriptedStt({ clock, script: DEMO_SCRIPT });
   }
