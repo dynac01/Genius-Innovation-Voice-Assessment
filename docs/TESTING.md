@@ -1,6 +1,6 @@
 # Voice Conversation — Testing Strategy
 
-**Status:** tiers established; unit and e2e populated from Phase 1 onward
+**Status:** all four tiers established; unit and feature populated through Phase 1
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [WORKPLAN.md](WORKPLAN.md)
 
@@ -210,10 +210,16 @@ neither substitutes for the other.
 
 | Tier | Status |
 |---|---|
-| Unit | 4 scaffold tests passing; real units land from Phase 1 |
-| Feature | project configured, empty until Phase 3 |
-| E2E | 1 smoke test passing (preconditions + no console errors) |
+| Unit | 38 passing — virtual clock, audio primitives, all three fakes |
+| Feature | 4 passing — scripted conversation end to end through the fakes |
+| E2E | 1 passing — browser preconditions, no console errors |
 | Latency | harness lands in Phase 4 |
+
+The unit tier covers the harness itself first: the virtual clock's ordering
+guarantees, and each fake's timing behaviour. A timing assertion is only worth as
+much as the clock underneath it, so `clock.test.ts` pins the awkward cases — timers
+scheduled by timers mid-advance, tie-breaking by registration order, and ordering
+held through a 12-deep async generator chain.
 
 CI runs typecheck, lint, format, unit and feature in one job, and e2e in a second so a browser
 download never sits on the critical path of the fast feedback loop. Neither job uses a secret.

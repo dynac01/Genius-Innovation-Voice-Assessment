@@ -10,7 +10,7 @@
 
 import { createServer } from 'node:http';
 
-import { CORE_PACKAGE, CORE_STATUS } from '@voice/core';
+import { CORE_PACKAGE } from '@voice/core';
 import { PROVIDERS_PACKAGE } from '@voice/providers';
 
 const PORT = Number(process.env['PORT'] ?? 8787);
@@ -22,7 +22,6 @@ const server = createServer((req, res) => {
     res.end(
       JSON.stringify({
         status: 'ok',
-        phase: CORE_STATUS,
         packages: [CORE_PACKAGE, PROVIDERS_PACKAGE],
       }),
     );

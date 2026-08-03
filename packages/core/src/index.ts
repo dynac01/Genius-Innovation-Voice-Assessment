@@ -7,15 +7,21 @@
  * to the outside world lives in @voice/providers or the apps.
  *
  * That constraint is enforced three ways:
- *   - `"types": []` in tsconfig.json, so Node's globals are not even in scope
+ *   - `"types": []` in tsconfig.json, so platform globals are not even in scope
  *   - a `no-restricted-imports` ESLint rule banning `node:*` and provider SDKs
  *   - this package declaring zero runtime dependencies
- *
- * Contracts land in Phase 1; see docs/WORKPLAN.md.
  */
 
-/** Identifies this package across the workspace. Used to verify workspace wiring. */
 export const CORE_PACKAGE = '@voice/core' as const;
 
-/** Semantic marker for the phase of the build-out this package has reached. */
-export const CORE_STATUS = 'scaffold' as const;
+export type { AudioChunk, AudioStream, TextSpan } from './audio.js';
+export { chunkDurationMs, samplesForMs, silentFrame, totalDurationMs } from './audio.js';
+
+export type { Message, Role } from './messages.js';
+
+export type { LLM, Pipeline, ReplyDelta, STT, Transcript, TTS } from './pipeline.js';
+
+export type { BargeInBehavior, Dialog, EarconSound, FromBridge, ToBridge } from './protocol.js';
+
+export type { Clock } from './clock.js';
+export { VirtualClock } from './clock.js';

@@ -1,6 +1,6 @@
 # Voice Conversation — Ordered Work Plan
 
-**Status:** Phase 0 complete (one item open: Codespaces verification)
+**Status:** Phases 0–1 complete (one item open: Codespaces verification)
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [TESTING.md](TESTING.md)
 
@@ -59,16 +59,16 @@ API keys, and CI is green.
 
 **Goal:** the fixed contracts exist as code, and the fakes that prove them are first-class.
 
-- [ ] `STT`, `LLM`, `TTS` interfaces transcribed verbatim from the PDF ([DESIGN.md §2.1](DESIGN.md#21-pipeline-interfaces))
-- [ ] `FromBridge` / `ToBridge` protocol types transcribed verbatim ([DESIGN.md §2.2](DESIGN.md#22-bridge--dialog-protocol))
-- [ ] Shared `Message`, `AudioChunk`, `AudioStream` types
-- [ ] **Scripted STT fake** — emits a programmed sequence of partials/finals with controllable
+- [x] `STT`, `LLM`, `TTS` interfaces transcribed verbatim from the PDF ([DESIGN.md §2.1](DESIGN.md#21-pipeline-interfaces))
+- [x] `FromBridge` / `ToBridge` protocol types transcribed verbatim ([DESIGN.md §2.2](DESIGN.md#22-bridge--dialog-protocol))
+- [x] Shared `Message`, `AudioChunk`, `AudioStream` types
+- [x] **Scripted STT fake** — emits a programmed sequence of partials/finals with controllable
       timing, so a test can express "partial, 400ms gap, more speech"
-- [ ] **Canned LLM fake** — streams a known reply token-by-token at a controllable rate
-- [ ] **Silent TTS fake** — emits correctly-shaped silent audio chunks at realistic pacing, and
+- [x] **Canned LLM fake** — streams a known reply token-by-token at a controllable rate
+- [x] **Silent TTS fake** — emits correctly-shaped silent audio chunks at realistic pacing, and
       records exactly which text it was asked to synthesize and when it was stopped
-- [ ] A virtual clock so control-flow tests are deterministic and fast (no `sleep`-based tests)
-- [ ] **Unit:** the virtual clock and each fake's own timing behaviour — the harness has to be
+- [x] A virtual clock so control-flow tests are deterministic and fast (no `sleep`-based tests)
+- [x] **Unit:** the virtual clock and each fake's own timing behaviour — the harness has to be
       trustworthy before anything is measured with it
 
 **Done when:** the fakes are importable, documented, and a test can drive a scripted
@@ -120,7 +120,6 @@ the user or cut them off.
 - [ ] **Feature:** fake STT emits partial → short gap → more speech; assert the assistant waits **(criterion 4)**
 - [ ] **Feature:** TTS receives its first chunk before the LLM stream completes **(criterion 5)**
 - [ ] **Feature:** transcript updates arrive incrementally, not in one batch at the end **(criterion 5)**
-- [ ] Flip the `feature` project to strict once the first test lands *(see [TESTING.md §8](TESTING.md#8-current-state))*
 
 **Done when:** a full conversational turn completes end to end on fakes, and criteria 4 and 5
 have passing automated tests.

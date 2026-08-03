@@ -1,5 +1,3 @@
-import { CORE_STATUS } from '@voice/core';
-
 /**
  * Phase 0 placeholder. The real demo — mic capture, playback, local VAD, earcons,
  * transcript — lands in Phase 2 onward. This exists to prove the app builds, renders,
@@ -21,7 +19,7 @@ export function App() {
       }}
     >
       <h1 style={{ fontSize: '1.25rem', marginBottom: '0.25rem' }}>Voice Conversation</h1>
-      <p style={{ opacity: 0.7, marginTop: 0 }}>Phase 0 — {CORE_STATUS}</p>
+      <p style={{ opacity: 0.7, marginTop: 0 }}>Phase 1 — contracts and fakes</p>
 
       {/*
         These three checks are the preconditions for the entire demo. Surfacing them
