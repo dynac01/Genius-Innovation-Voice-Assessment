@@ -5,16 +5,24 @@
   "type": "module",
   "description": "Transport and session host for the voice loop. Owns the WebSocket, not the logic.",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@nestjs/common": "^11.1.28",
+    "@nestjs/core": "^11.1.28",
+    "@nestjs/platform-express": "^11.1.28",
+    "@nestjs/platform-ws": "^11.1.28",
+    "@nestjs/websockets": "^11.1.28",
     "@voice/core": "workspace:*",
     "@voice/providers": "workspace:*",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
     "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/ws": "^8.18.1",
     "tsx": "^4.19.2"
   }

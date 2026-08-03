@@ -70,9 +70,30 @@ Three seams, and each is real rather than decorative:
 ```
 packages/core        the loop, protocol, state machines, VAD, endpointer, chunker — no I/O
 packages/providers   fakes first, real providers alongside
-apps/server          transport and session host
+apps/server          NestJS host — HTTP, WebSocket gateway, session lifecycle
 apps/web             the browser demo
 ```
+
+**The backend is NestJS, and the loop does not know it.** Modules, DI and lifecycle
+live in `apps/server`; turn-taking, endpointing, barge-in arbitration and the dialog
+protocol live in `@voice/core`, which imports no Nest, no `node:*` and no provider
+SDK — enforced by `"types": []` and a lint rule rather than by discipline. Replacing
+a hand-rolled `node:http` server with Nest changed one directory and zero lines of
+`packages/core`, which is the same property criterion 7 asks of the providers,
+applied to the framework.
+
+Two places where Nest's defaults were the wrong fit and were overridden deliberately:
+
+- **`RawWsAdapter`** disables Nest's message routing. Gateways assume every frame is
+  `{ event, data }` JSON; here audio is raw binary at fifty frames a second and
+  control is bare JSON from a wire format shared with a browser that has no Nest in
+  it. Reshaping the protocol to suit one side's transport layer would be backwards.
+- **`StaticMiddleware`** keeps the tested static handler rather than adopting
+  `ServeStaticModule`. The existing one carries decisions worth keeping — SPA
+  fallback that deliberately does *not* apply to missing assets, rejection of
+  malformed percent-encodings and null bytes, hashed assets cached hard while
+  `index.html` is not cached at all. Swapping tested behaviour for a module's
+  defaults is a downgrade dressed as idiom.
 
 **The bridge owns everything acoustic and no opinion about what to say.** That split is why a real decision engine can replace `StubDialog` without `bridge.ts` changing a line, and why every acoustic behaviour can be tested against a dialog that says exactly what a test needs.
 
@@ -181,9 +202,9 @@ TTS_PROVIDER=deepgram      # fake | fake-silent | deepgram
 The server prints its default and what it can offer, then logs each session's actual pipeline — a silently-wrong pipeline is worse than a loud failure:
 
 ```
-[server] default  stt=real  llm=real  tts=real   (real available: stt=true llm=true tts=true)
-[server] the browser can change any of these per session
-[ws] [75a1295c] pipeline stt=fake llm=fake tts=real
+[Nest] LOG [bootstrap] default  stt=real  llm=real  tts=real   (real available: stt=true llm=true tts=true)
+[Nest] LOG [bootstrap] the browser can change any of these per session
+[Nest] LOG [VoiceGateway] [75a1295c] session.hello {"announcedRate":44100,"usingRate":44100,...}
 ```
 
 **Why Haiku 4.5:** a latency decision, not a cost one. In a voice loop, time-to-first-token *is* the product — you hear silence until the first clause reaches the synthesiser. Swap `ANTHROPIC_MODEL` for a larger Claude if replies feel thin; nothing else changes.
