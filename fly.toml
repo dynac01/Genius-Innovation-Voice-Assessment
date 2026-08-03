@@ -1,0 +1,39 @@
+# Fly.io deployment.
+#
+# Chosen for persistent WebSockets and HTTPS by default. Nothing in the app is
+# host-specific — it is one container listening on one port — so moving to another
+# host is a config change, not a code change.
+
+app = "voice-conversation"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8787
+  # The brief requires HTTPS: getUserMedia refuses to run outside a secure
+  # context, so plain HTTP would not merely be untidy — the demo would not work.
+  force_https = true
+
+  # A voice session is a live WebSocket. Stopping the machine under an open
+  # connection would drop it mid-sentence, so instances stay up.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 20
+    hard_limit = 25
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

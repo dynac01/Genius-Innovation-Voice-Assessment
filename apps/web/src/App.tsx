@@ -56,6 +56,12 @@ export function App() {
         </p>
       )}
 
+      {state.connection === 'reconnecting' && (
+        <p className="notice" role="status" data-testid="reconnecting">
+          Connection lost — reconnecting…
+        </p>
+      )}
+
       <dl className="stats" data-testid="stats">
         <div>
           <dt>Phase</dt>
@@ -64,6 +70,10 @@ export function App() {
         <div>
           <dt>Turn</dt>
           <dd data-testid="turn">{state.turn}</dd>
+        </div>
+        <div>
+          <dt>Connection</dt>
+          <dd data-testid="connection">{state.connection}</dd>
         </div>
         <div>
           <dt>Mic</dt>

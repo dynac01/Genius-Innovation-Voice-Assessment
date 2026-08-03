@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AudioEngine, MicrophoneError } from './audio/engine.js';
 import type { MicPermission } from './audio/engine.js';
 import { VoiceSocket, socketUrl } from './transport.js';
+import type { SocketStatus } from './transport.js';
 
 export type SessionPhase = 'idle' | 'starting' | 'running' | 'error';
 
@@ -25,6 +26,7 @@ export interface SessionState {
   /** Measured barge-in: user onset → assistant audio silent. */
   bargeInMs: number | undefined;
   bargeIns: number;
+  connection: SocketStatus;
 }
 
 const INITIAL: SessionState = {
@@ -43,6 +45,7 @@ const INITIAL: SessionState = {
   connectMs: undefined,
   bargeInMs: undefined,
   bargeIns: 0,
+  connection: 'closed',
 };
 
 /**
@@ -141,8 +144,16 @@ export function useVoiceSession(): {
         }));
       },
       onError: (message) => setState((prev) => ({ ...prev, phase: 'error', error: message })),
+      onStatus: (connection) => setState((prev) => ({ ...prev, connection })),
+      // A dropped socket now reconnects on its own, so a close is not the end of
+      // the session — the status field says which it is, and the phase only falls
+      // back to idle once the socket is genuinely done.
       onClose: () =>
-        setState((prev) => (prev.phase === 'error' ? prev : { ...prev, phase: 'idle' })),
+        setState((prev) =>
+          prev.phase === 'error' || prev.connection === 'reconnecting'
+            ? prev
+            : { ...prev, phase: 'idle' },
+        ),
     });
     socketRef.current = socket;
 

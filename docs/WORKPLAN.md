@@ -1,6 +1,6 @@
 # Voice Conversation — Ordered Work Plan
 
-**Status:** Phases 0–8 complete. All eight success criteria have passing tests. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
+**Status:** Phases 0–9 built. All eight success criteria have passing tests. Three items need a human: the deploy itself, a real phone, and Codespaces. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [TESTING.md](TESTING.md)
 
@@ -363,17 +363,44 @@ operator needs "llm sent nothing for 500ms".
 **Goal:** a URL a stranger can open on a phone and talk to.
 
 - [ ] Mobile browser pass — iOS Safari and Android Chrome, both real devices
-- [ ] Touch-friendly UI, sensible layout at phone widths
-- [ ] Mic permission flow on mobile specifically (different prompt, different failure modes)
-- [ ] Dockerfile — single container, no host-specific code
+- [x] Touch-friendly UI, sensible layout at phone widths
+- [x] Mic permission flow on mobile specifically (different prompt, different failure modes)
+- [x] Dockerfile — single container, no host-specific code
 - [ ] Deploy to Fly.io with HTTPS and WebSocket support confirmed
 - [ ] Secrets configured on the host, not in the repo
-- [ ] **E2E:** full turn on the fakes — permission granted, socket connects, transcript renders
+- [x] **E2E:** full turn on the fakes — permission granted, socket connects, transcript renders
       both sides ([TESTING.md §4](TESTING.md#4-e2e--thin-and-real))
 - [ ] **Latency harness** re-run against the deployed URL; record the numbers
 - [ ] End-to-end verification on the deployed URL, from a phone, on cellular
 
 **Done when:** the deployed HTTPS URL works end to end on a phone that has never seen the app.
+
+**One container, one origin.** In development Vite serves the app and proxies `/ws`; in
+production the server serves both. That is not tidiness — a second origin makes the socket
+cross-origin and puts the demo one CORS or cookie policy away from failing on exactly the mobile
+browsers it needs to work on. It also means one certificate and one URL to hand over.
+
+Verified locally against the built artefact: the app, its hashed assets, the AudioWorklet, `/ws`
+and `/health` all served from `:8787`; SPA routes fall back to `index.html` while a missing
+*asset* 404s (HTML for a missing script surfaces as a baffling syntax error); hashed assets cached
+immutably and `index.html` never (a deploy must not leave phones on the previous build); and path
+traversal — including encoded forms — reaches the fallback or a 404, never a file.
+
+**Reconnect** (deferred here from Phase 8) uses fast-then-backing-off retries: most mobile drops
+are momentary — a tunnel, a cell handover, a screen lock — and an immediate retry usually
+succeeds, but a genuinely dead server should not be hammered by every phone that ever opened the
+page. A deliberate close is distinguished from a dropped one, or ending a session would trigger
+the reconnect loop and quietly reopen the microphone.
+
+**Mobile tests cover layout, not the engine.** Chromium at an iPhone viewport asserts no
+horizontal overflow, a 44pt-plus touch target, the capability checks above the fold, and a full
+turn. WebKit was considered and rejected: it would buy CSS fidelity, but the failures that
+actually bite on iOS are in the audio stack, which desktop WebKit does not reproduce either — so
+it costs a second browser in CI while leaving the real risk exactly as manual as it already is.
+
+**Still needs a human**, and none of it is automatable from here: the deploy (Fly auth), a real
+phone (iOS `AudioContext` gesture, speakerphone echo), and the latency harness re-run against the
+deployed URL.
 
 ---
 

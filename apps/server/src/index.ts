@@ -16,8 +16,11 @@ import { PROVIDERS_PACKAGE, SystemClock } from '@voice/providers';
 import { WebSocketServer } from 'ws';
 import type { RawData, WebSocket } from 'ws';
 
+import { fileURLToPath } from 'node:url';
+
 import { createPipeline, describePipeline } from './pipeline.js';
 import { Session } from './session.js';
+import { createStaticSite } from './static.js';
 
 /**
  * Node reads .env natively, so provider keys need no dependency and no bundler
@@ -45,6 +48,16 @@ loadEnvFromAncestors();
 const PORT = Number(process.env['PORT'] ?? 8787);
 const HOST = process.env['HOST'] ?? '0.0.0.0';
 
+/**
+ * In production this process serves the built app *and* the socket, from one
+ * origin. Resolved relative to this module rather than the cwd so it works the
+ * same whether started from the repo root, from apps/server, or from a container
+ * WORKDIR — the cwd-relative version of this is the .env bug all over again.
+ */
+const WEB_DIST =
+  process.env['WEB_DIST'] ?? fileURLToPath(new URL('../../web/dist', import.meta.url));
+const site = createStaticSite(WEB_DIST);
+
 const server = createServer((req, res) => {
   if (req.url === '/health' || req.url === '/api/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -57,6 +70,8 @@ const server = createServer((req, res) => {
     );
     return;
   }
+  if (site.serve(req.url ?? '/', res)) return;
+
   res.writeHead(404, { 'content-type': 'text/plain' });
   res.end('not found\n');
 });
@@ -122,5 +137,13 @@ server.listen(PORT, HOST, () => {
   console.log(`[server] http://${HOST}:${PORT}  (health: /health, socket: /ws)`);
   console.log(
     `[server] pipeline  stt=${pipeline['stt']}  llm=${pipeline['llm']}  tts=${pipeline['tts']}`,
+  );
+  // Whether the browser app is being served from here is the difference between
+  // production (one origin) and development (Vite proxies in front). Saying which
+  // is cheaper than discovering it from a blank page.
+  console.log(
+    site.available
+      ? `[server] app served from ${site.root}`
+      : `[server] no build at ${site.root} — API only`,
   );
 });

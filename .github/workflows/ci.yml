@@ -75,3 +75,31 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+  # The deploy artefact. Building it in CI means a broken Dockerfile is caught
+  # here rather than at deploy time, when it blocks a release.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: voice-conversation:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Container serves the app and answers /health
+        run: |
+          docker run -d --name voice -p 8787:8787 voice-conversation:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8787/health >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8787/health | tee /dev/stderr | grep -q '"status":"ok"'
+          curl -fsS http://localhost:8787/ | grep -qi '<!doctype html'
+          docker logs voice
+          docker rm -f voice
