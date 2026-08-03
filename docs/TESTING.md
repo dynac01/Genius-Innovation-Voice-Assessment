@@ -1,6 +1,6 @@
 # Voice Conversation — Testing Strategy
 
-**Status:** all four tiers populated through Phase 6; latency harness reporting real numbers
+**Status:** all four tiers populated through Phase 7; latency harness reporting real numbers
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [WORKPLAN.md](WORKPLAN.md)
 
@@ -159,7 +159,10 @@ about runtime behaviour. A passing test proves the swapped provider works; it ca
 loop was untouched.
 
 So it is checked directly: swap the TTS provider, then confirm `git diff` reports zero changes
-under `packages/core/`. Automatable as a CI guard later; a documented manual step for now.
+under `packages/core/`. **Verified for Phase 7:** adding three real providers produced zero changes under
+`packages/core/`. `apps/server/src/pipeline.test.ts` additionally asserts the selection itself —
+that swapping only `TTS_PROVIDER` leaves the STT and LLM stages identical, and that a missing key
+fails loudly rather than falling back to a fake and looking like a working demo.
 
 Two structural defences back it up, so the property is enforced rather than merely observed:
 
@@ -210,7 +213,7 @@ neither substitutes for the other.
 
 | Tier | Status |
 |---|---|
-| Unit | 205 passing — clock, audio, wire codec, queue, turn machine, endpointer, chunker, VAD, intent classifier, earcon specs, fakes |
+| Unit | 214 passing — clock, audio, wire codec, queue, turn machine, endpointer, chunker, VAD, intent classifier, earcon specs, fakes, provider selection |
 | Feature | 33 passing — bridge control flow (4, 5), barge-in / resume / fresh turn (1, 2, 3), earcons (6) |
 | E2E | 1 passing — browser preconditions, no console errors |
 | Latency | `pnpm bench:latency` — barge-in stop **70–78ms**, target <300ms |

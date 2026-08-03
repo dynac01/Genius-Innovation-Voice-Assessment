@@ -17,3 +17,12 @@ export const PROVIDERS_PACKAGE = '@voice/providers' as const;
 
 export * from './fakes/index.js';
 export { SystemClock } from './clock.js';
+
+export type { AnthropicLlmOptions } from './anthropic/llm.js';
+export { AnthropicLlm } from './anthropic/llm.js';
+
+export type { DeepgramSttOptions } from './deepgram/stt.js';
+export { DeepgramStt } from './deepgram/stt.js';
+
+export type { DeepgramTtsOptions } from './deepgram/tts.js';
+export { DeepgramTts } from './deepgram/tts.js';

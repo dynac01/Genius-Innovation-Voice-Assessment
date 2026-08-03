@@ -13,6 +13,11 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@voice/core": "workspace:*"
+    "@anthropic-ai/sdk": "^0.115.0",
+    "@voice/core": "workspace:*",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

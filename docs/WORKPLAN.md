@@ -1,6 +1,6 @@
 # Voice Conversation — Ordered Work Plan
 
-**Status:** Phases 0–6 complete. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
+**Status:** Phases 0–7 complete. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [TESTING.md](TESTING.md)
 
@@ -277,18 +277,38 @@ cannot duck the reply behind it. There is nothing to tune and nothing to get wro
 **Goal:** swap fakes for real services with **no change to the loop** — which is the proof that
 the boundary is real.
 
-- [ ] Deepgram Nova-3 streaming STT behind the `STT` interface
-- [ ] Deepgram Aura-2 streaming TTS behind the `TTS` interface
-- [ ] Claude Haiku 4.5 behind the `LLM` interface, streaming, with a conversational system prompt
-- [ ] Provider selection by env var; fakes remain the zero-key default
-- [ ] **Second TTS implementation** (ElevenLabs Flash v2.5) purely to demonstrate the swap
-- [ ] **Inspection:** confirm `git diff` reports **zero changes** under `packages/core/` across
+- [x] Deepgram Nova-3 streaming STT behind the `STT` interface
+- [x] Deepgram Aura-2 streaming TTS behind the `TTS` interface
+- [x] Claude Haiku 4.5 behind the `LLM` interface, streaming, with a conversational system prompt
+- [x] Provider selection by env var; fakes remain the zero-key default
+- [x] ~~Second TTS implementation (ElevenLabs)~~ — **not needed.** Criterion 7 defines the
+      demonstration as "once with a real provider and once with the silent fake", so the swap is
+      real ↔ fake. `SilentTts` already exists and is tested; a second paid vendor adds nothing.
+- [x] **Inspection:** confirm `git diff` reports **zero changes** under `packages/core/` across
       the swap **(criterion 7)**. This is a claim about a diff, not about runtime behaviour, so
       no test can prove it ([TESTING.md §5](TESTING.md#5-criterion-7-is-verified-by-inspection-not-assertion))
-- [ ] Re-measure end-to-end round-trip latency against real providers
+- [x] Re-measure end-to-end round-trip latency against real providers
 
 **Done when:** the same loop runs on real providers and on fakes, selected by configuration, and
 the TTS swap is demonstrable live.
+
+**Criterion 7, verified in its strongest form:** adding Deepgram Nova-3, Deepgram Aura-2 and
+Claude Haiku 4.5 produced **zero changes under `packages/core/`**. The loop is written against
+`STT`, `LLM` and `TTS` and has no way to ask which implementation it was handed.
+
+**Measured against live providers** (warm; the first call of a process pays a one-off ~4s TLS
+and connection setup, which is worth pre-warming at session start):
+
+| Stage | Warm | Note |
+|---|---|---|
+| Claude Haiku 4.5 — time to first token | 565–1332ms | median ≈760ms |
+| Deepgram Aura-2 — time to first byte | 416–477ms | |
+| Deepgram Nova-3 — socket + stream | connects, streams, closes cleanly | |
+
+**One mapping decision worth recording:** `final` is wired to Deepgram's `speech_final`, **not**
+`is_final`. `is_final` means "this text is stable", which is true repeatedly mid-sentence;
+`speech_final` means "the speaker stopped". Using the former would end the turn on the first
+stable clause — the exact failure criterion 4 exists to catch.
 
 ---
 
