@@ -36,6 +36,20 @@ COPY --from=build /app/apps/server ./apps/server
 COPY --from=build /app/apps/web/dist ./apps/web/dist
 COPY --from=build /app/package.json /app/pnpm-workspace.yaml ./
 
+# tsconfig.base.json, because every package's tsconfig extends it and the server
+# runs from TypeScript source under tsx.
+#
+# Leaving it out does not degrade gracefully: esbuild cannot resolve the `extends`,
+# discards the *whole* config rather than just the inherited half, and so loses
+# `experimentalDecorators` — which is declared directly in the server's own tsconfig
+# and would look impossible to lose. The container then built cleanly and died on
+# boot with "Parameter decorators only work when experimental decorators are
+# enabled", pointing at a setting that is plainly present.
+#
+# Caught by the container smoke test in CI, which is the second time that job has
+# earned its place — the first was pnpm not hoisting tsx.
+COPY --from=build /app/tsconfig.base.json ./
+
 # Never runs as root: the process handles untrusted input from every visitor.
 USER node
 
