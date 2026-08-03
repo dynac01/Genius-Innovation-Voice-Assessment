@@ -8,7 +8,7 @@ import {
   describePipeline,
   providerAvailability,
 } from './pipeline.js';
-import type { Env, PipelineSetup } from './pipeline.js';
+import type { Env, PipelineSetup, ProviderLog } from './pipeline.js';
 
 /**
  * Nest's view of provider wiring.
@@ -50,7 +50,7 @@ export class PipelineService {
    * browser: criterion 7 asks for the swap to be demonstrable, and a swap that
    * needs a restart is a deployment step rather than a demonstration.
    */
-  build(clock: SystemClock, want?: PipelineSelection): PipelineSetup {
-    return createPipeline(clock, this.#env, want);
+  build(clock: SystemClock, want?: PipelineSelection, log?: ProviderLog): PipelineSetup {
+    return createPipeline(clock, this.#env, want, log);
   }
 }

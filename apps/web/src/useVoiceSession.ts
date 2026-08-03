@@ -249,7 +249,12 @@ export function useVoiceSession(): {
             }));
             break;
           case 'state':
-            if (event.state === 'thinking') newAssistantLineRef.current = true;
+            if (event.state === 'thinking') {
+              newAssistantLineRef.current = true;
+              // A new turn began, so the last turn's failure notice is stale.
+              // Leaving it up makes a recovered session look permanently broken.
+              setState((prev) => (prev.error === undefined ? prev : { ...prev, error: undefined }));
+            }
             // A reply that finished normally is no longer in progress. Nothing was
             // clearing this, so every completed assistant turn kept its cursor and
             // the page filled up with them.
@@ -336,7 +341,23 @@ export function useVoiceSession(): {
             });
             break;
           case 'error':
-            setState((prev) => ({ ...prev, phase: 'error', error: event.message }));
+            /*
+             * A provider hiccup ends a reply, not the session.
+             *
+             * This used to set `phase: 'error'`, which drives everything the UI
+             * uses to decide whether a session is alive — the toggle flips back to
+             * "Start session", the speaker test greys out, the meter stops. So one
+             * failed clause presented as a dead app while the socket was still open
+             * and the loop still able to take turns. The brief is explicit that a
+             * hiccup should surface a failed earcon rather than hang, and a UI that
+             * looks switched off is a worse outcome than hanging: it tells the user
+             * to give up.
+             *
+             * Fatal errors still exist and still set the phase — a socket that
+             * cannot be reached, a microphone that will not start. Those come from
+             * the transport and engine handlers, not from here.
+             */
+            setState((prev) => ({ ...prev, error: event.message, lines: settleAll(prev.lines) }));
             break;
         }
       },

@@ -17,6 +17,17 @@ export interface DeepgramTtsOptions {
    * corrupting it.
    */
   readonly charsPerSecond?: number;
+  /**
+   * Socket lifecycle sink.
+   *
+   * Frame-level diagnostics already exist and answer "did audio arrive". They
+   * cannot answer "why did none arrive", which is the question a stalled
+   * synthesiser actually poses: a socket that opened and never spoke, one that was
+   * refused, and one that closed early are three different faults with three
+   * different fixes, and all three look identical from the frame count. A real
+   * session went mute for eight seconds and the log could say nothing about it.
+   */
+  readonly onLog?: (kind: string, data?: Record<string, unknown>) => void;
 }
 
 /** Aura-2 rejects a single message longer than this. */
@@ -58,6 +69,11 @@ export class DeepgramTts implements TTS {
     const charsPerSecond = this.#options.charsPerSecond ?? 15;
     const speakable = trimmed.slice(0, MAX_SPEAK_CHARS);
 
+    const log = this.#options.onLog;
+    const openedAt = Date.now();
+    let firstFrameAt: number | undefined;
+    let frameCount = 0;
+
     const socket = new WebSocket(this.#url(sampleRate), {
       headers: { Authorization: `Token ${this.#options.apiKey}` },
     });
@@ -79,6 +95,14 @@ export class DeepgramTts implements TTS {
      */
     socket.on('message', (data: RawData, isBinary: boolean) => {
       if (isBinary) {
+        frameCount += 1;
+        if (firstFrameAt === undefined) {
+          firstFrameAt = Date.now();
+          log?.('tts.socket.first_audio', {
+            afterMs: firstFrameAt - openedAt,
+            chars: speakable.length,
+          });
+        }
         frames.push(toInt16Samples(data as BinaryMessage));
         return;
       }
@@ -90,8 +114,22 @@ export class DeepgramTts implements TTS {
       }
     });
 
-    socket.on('error', (error: Error) => frames.fail(error));
-    socket.on('close', () => frames.close());
+    socket.on('error', (error: Error) => {
+      log?.('tts.socket.error', { message: error.message, afterMs: Date.now() - openedAt });
+      frames.fail(error);
+    });
+    socket.on('close', (code: number, reason: Buffer) => {
+      // A close before any audio is the interesting one: it separates "the provider
+      // refused us" — a bad key, a rate limit, a connection cap — from a stall.
+      log?.('tts.socket.close', {
+        code,
+        reason: reason.toString().slice(0, 120),
+        afterMs: Date.now() - openedAt,
+        frames: frameCount,
+        producedAudio: firstFrameAt !== undefined,
+      });
+      frames.close();
+    });
 
     const requesting = (async () => {
       try {
@@ -139,7 +177,26 @@ export class DeepgramTts implements TTS {
       }
       if (pending !== undefined) yield frameWithSpan(pending, true);
     } finally {
-      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+      if (socket.readyState === WebSocket.OPEN) {
+        /*
+         * Deepgram's documented shutdown, not just a socket close.
+         *
+         * Dropping the connection produced close code 1006 — abnormal, no close
+         * handshake — on every single stream, which is the provider being told
+         * nothing about why its peer vanished. The `Close` control message stops
+         * server-side processing promptly and closes cleanly, which matters most on
+         * the path this project takes most often: a barge-in abandons synthesis
+         * mid-stream, and the difference between "told to stop" and "peer
+         * disappeared" is whether the provider keeps working on audio nobody will
+         * ever hear.
+         */
+        try {
+          socket.send(JSON.stringify({ type: 'Close' }));
+        } catch {
+          // Racing a close is fine; the socket close below is the real teardown.
+        }
+        socket.close();
+      } else if (socket.readyState === WebSocket.CONNECTING) {
         socket.close();
       }
     }

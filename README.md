@@ -361,7 +361,18 @@ Nothing in the app is host-specific — it is one container listening on one por
 
 Roughly in order of what I would do next:
 
-1. **A neural VAD in the browser — Silero or a small CNN.** The published stack for
+1. **One synthesis socket per reply, flushed once.** Deepgram's TTS WebSocket
+   [documents a limit of 20 `Flush` messages per 60 seconds](https://developers.deepgram.com/docs/tts-ws-flush),
+   and this sends one `Flush` per *clause* — roughly four per reply. A conversation
+   moving faster than a reply every twelve seconds crosses that line, and what
+   happens then is not an error: the socket stays open and stops producing audio, so
+   it presents as an eight-second stall and a failed earcon. A real session hit it.
+   The fix is to send `Speak` per clause on one long-lived socket and `Flush` only
+   when the reply ends, which is both fewer flushes *and* lower latency, since audio
+   streams continuously instead of restarting per clause. It needs a reply boundary,
+   and `synthesizeStream(text)` — fixed by the brief — does not carry one, so it
+   wants a small addition to the interface rather than a patch behind it.
+2. **A neural VAD in the browser — Silero or a small CNN.** The published stack for
    barge-in is three layers: an absolute energy gate, a *voice classifier* at
    confidence > 0.7, and a 200–300 ms minimum-duration guard. Layers one and three
    are here; the classifier is not, and it is the layer that distinguishes a voice
@@ -369,12 +380,12 @@ Roughly in order of what I would do next:
    session log showed the difference starkly — but it still cannot tell a person
    from a fan, and only the classifier can. It means shipping an ONNX runtime and a
    ~2 MB model, which is why it is the next deliberate change rather than a patch.
-2. **Pre-warm provider connections at session start.** The ~4 s first-request TLS cost lands on the first turn of every cold server. It is the single largest latency win available and is not hard.
-3. **Verify and tune the echo guard on a real speakerphone.** The largest untested assumption in the highest-weighted criterion. If `duckedThresholdDb` is wrong, the assistant interrupts itself — which reads as barge-in working *too* well and is maddening to diagnose.
-4. **Adaptive endpointing.** 700 ms is a fixed compromise. Using the STT's own acoustic signals — Deepgram already sends `UtteranceEnd` and VAD events we currently ignore — would let it end faster after a clear stop and wait longer after a trailing conjunction.
-5. **Resume across a re-synthesis boundary.** Resume re-synthesises the remaining text, so the voice restarts mid-clause with a fresh prosodic contour. Audible if you listen for it. Splicing at a word boundary would hide it.
-6. **A real dialog engine.** The protocol is honoured and the stub is deliberately simple — intent classification is a phrase table. That is the right place to put a model, and the seam is already there.
-7. **Per-session provider instances with backpressure.** Each connection currently builds its own pipeline; under load that wants pooling and a queue rather than unbounded sockets.
+3. **Pre-warm provider connections at session start.** The ~4 s first-request TLS cost lands on the first turn of every cold server. It is the single largest latency win available and is not hard.
+4. **Verify and tune the echo guard on a real speakerphone.** The largest untested assumption in the highest-weighted criterion. If `duckedThresholdDb` is wrong, the assistant interrupts itself — which reads as barge-in working *too* well and is maddening to diagnose.
+5. **Adaptive endpointing.** 700 ms is a fixed compromise. Using the STT's own acoustic signals — Deepgram already sends `UtteranceEnd` and VAD events we currently ignore — would let it end faster after a clear stop and wait longer after a trailing conjunction.
+6. **Resume across a re-synthesis boundary.** Resume re-synthesises the remaining text, so the voice restarts mid-clause with a fresh prosodic contour. Audible if you listen for it. Splicing at a word boundary would hide it.
+7. **A real dialog engine.** The protocol is honoured and the stub is deliberately simple — intent classification is a phrase table. That is the right place to put a model, and the seam is already there.
+8. **Per-session provider instances with backpressure.** Each connection currently builds its own pipeline; under load that wants pooling and a queue rather than unbounded sockets.
 
 ---
 

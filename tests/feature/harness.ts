@@ -1,5 +1,5 @@
 import { AudioBridge, StubDialog, VirtualClock, withIdleTimeout } from '@voice/core';
-import type { BridgeEvent, LLM, Message, Pipeline } from '@voice/core';
+import type { AudioChunk, BridgeEvent, LLM, Message, Pipeline } from '@voice/core';
 import { CannedLlm, ScriptedStt, SilentTts, fakeMicrophone } from '@voice/providers';
 import type { SttScriptStep } from '@voice/providers';
 
@@ -27,6 +27,14 @@ export interface HarnessOptions {
   stallAfterTokens?: number;
   /** Wrap the model in an idle budget, so a stall surfaces instead of hanging. */
   llmIdleTimeoutMs?: number;
+  /**
+   * Make synthesis throw on its first N calls, standing in for a TTS hiccup.
+   *
+   * Distinct from `failAfterTokens`, which fails the *model*. The two failures were
+   * assumed to behave alike and do not: a model failure ends one reply, while a
+   * synthesis failure used to end the only loop that speaks.
+   */
+  failSynthesisCalls?: number;
   /** Called on every event, so a test can interrupt at a chosen moment. */
   onEvent?: (event: BridgeEvent, ctx: { bridge: AudioBridge; clock: VirtualClock }) => void;
 }
@@ -73,7 +81,26 @@ export function harness(options: HarnessOptions): Harness {
             }),
         };
   const tts = new SilentTts({ clock, ttfbMs: 40, frameMs: 20 });
-  const pipeline: Pipeline = { stt, llm: guardedLlm, tts };
+
+  let synthesisCalls = 0;
+  const failing = options.failSynthesisCalls ?? 0;
+  const guardedTts: Pipeline['tts'] = {
+    synthesizeStream(text) {
+      synthesisCalls += 1;
+      if (synthesisCalls <= failing) {
+        // A stream that opens and then dies, which is how a socket failure
+        // actually arrives. Hand-rolled rather than a generator so the rejection
+        // happens on the first `next()` — the moment the loop starts consuming.
+        const failure = new Error(`synthesis failed on call ${synthesisCalls}`);
+        return {
+          [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(failure) }),
+        } as AsyncIterable<AudioChunk>;
+      }
+      return tts.synthesizeStream(text);
+    },
+  };
+
+  const pipeline: Pipeline = { stt, llm: guardedLlm, tts: guardedTts };
   const dialog = new StubDialog({
     llm: guardedLlm,
     onWarning: (message) => warnings.push(message),

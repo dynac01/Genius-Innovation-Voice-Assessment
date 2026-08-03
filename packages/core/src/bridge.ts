@@ -256,32 +256,63 @@ export class AudioBridge {
       if (this.#stopped) return;
       if (this.#gate !== 'open') continue;
 
-      const generation = this.#speakGeneration;
-
-      // Where this text sits in the reply. Found rather than accumulated: the
-      // chunker trims its seams, so accumulating would drift by exactly the
-      // whitespace removed — and drift is what makes a resume land in the wrong place.
-      const found = this.#reply.indexOf(text, Math.max(0, this.#spokenChars - 1));
-      const base = found >= 0 ? found : this.#spokenChars;
-
-      for await (const chunk of this.#options.pipeline.tts.synthesizeStream(text)) {
-        if (this.#stopped || generation !== this.#speakGeneration) break;
-
-        this.#ensureSpeaking();
-        this.#spokenChars = base + (chunk.span?.end ?? text.length);
-        this.#emit({ type: 'audio', chunk });
+      /*
+       * A failed clause must not take the loop down with it.
+       *
+       * This is the only loop that speaks, and it runs for the whole session. An
+       * error escaping here unwinds the `for await` permanently: the catch attached
+       * to this method's promise still reports honestly — failed earcon, error
+       * event, turn returned to a usable state — and by the time it runs there is
+       * nothing left to speak with. Everything downstream keeps working, which is
+       * what makes it so hard to see. Transcripts update, turns are taken, the
+       * socket stays open, and the assistant is mute from then on.
+       *
+       * That is not hypothetical: a real session lost its voice exactly this way
+       * when a synthesis socket went quiet and the idle budget fired.
+       *
+       * The failure the hiccup tests already covered was a *model* failure, which
+       * happens upstream of here and therefore never exercised this. One is
+       * recoverable and the other was terminal, and nothing distinguished them.
+       *
+       * So synthesis failures are per-clause: report, end the turn, keep the loop.
+       * The outer catch stays for the case it is actually right for — the speech
+       * queue itself failing, which nothing can recover from.
+       */
+      try {
+        await this.#speakOne(text);
+      } catch (error) {
+        this.#fail(error);
       }
+    }
+  }
 
-      // Reply fully spoken with nothing queued behind it.
-      if (
-        generation === this.#speakGeneration &&
-        this.#gate === 'open' &&
-        this.#speech.size === 0 &&
-        this.#spokenChars >= this.#reply.length &&
-        this.#turn.state === 'speaking'
-      ) {
-        this.#apply({ type: 'reply_done' });
-      }
+  /** One clause: synthesise it, emit its audio, and close the reply if it was the last. */
+  async #speakOne(text: string): Promise<void> {
+    const generation = this.#speakGeneration;
+
+    // Where this text sits in the reply. Found rather than accumulated: the
+    // chunker trims its seams, so accumulating would drift by exactly the
+    // whitespace removed — and drift is what makes a resume land in the wrong place.
+    const found = this.#reply.indexOf(text, Math.max(0, this.#spokenChars - 1));
+    const base = found >= 0 ? found : this.#spokenChars;
+
+    for await (const chunk of this.#options.pipeline.tts.synthesizeStream(text)) {
+      if (this.#stopped || generation !== this.#speakGeneration) break;
+
+      this.#ensureSpeaking();
+      this.#spokenChars = base + (chunk.span?.end ?? text.length);
+      this.#emit({ type: 'audio', chunk });
+    }
+
+    // Reply fully spoken with nothing queued behind it.
+    if (
+      generation === this.#speakGeneration &&
+      this.#gate === 'open' &&
+      this.#speech.size === 0 &&
+      this.#spokenChars >= this.#reply.length &&
+      this.#turn.state === 'speaking'
+    ) {
+      this.#apply({ type: 'reply_done' });
     }
   }
 

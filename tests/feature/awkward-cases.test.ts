@@ -215,3 +215,67 @@ describe('provider hiccup mid-reply', () => {
     expect(h.bridge.state).toBe('idle');
   });
 });
+
+/**
+ * A synthesis failure must end a reply, not the ability to speak.
+ *
+ * This came from a real session. Several turns worked, then Deepgram's TTS socket
+ * went quiet, the idle budget fired, and from that moment the assistant never made
+ * another sound — while the transcript kept updating, turns kept being taken, and
+ * the socket stayed open. It looked like the voice had been switched off.
+ *
+ * The cause is a shape that reads as correct: synthesis runs in one long-lived loop
+ * over the speech queue, and errors were handled by attaching `.catch()` to that
+ * loop's promise. The catch reports the failure honestly — failed earcon, error
+ * event, turn returned to a usable state — and by the time it runs the `for await`
+ * has already unwound. There is nothing left to speak with.
+ *
+ * The hiccup tests that existed all failed the *model*, which the loop survives
+ * because the failure happens upstream of it. Nothing failed the synthesiser, so
+ * nothing noticed that one is recoverable and the other was terminal.
+ */
+describe('synthesis hiccup mid-reply', () => {
+  it('recovers: a later turn still produces audio', async () => {
+    const h = harness({
+      script: [
+        { afterMs: 150, text: 'first question', final: true },
+        { afterMs: 6_000, text: 'second question', final: true },
+      ],
+      reply: REPLY,
+      failSynthesisCalls: 1,
+      micMs: 18_000,
+    });
+    await h.run();
+
+    const audio = h.events.filter(({ event }) => event.type === 'audio');
+    expect(audio.length, 'nothing was ever spoken again after one failed clause').toBeGreaterThan(
+      0,
+    );
+  });
+
+  it('reports the failure rather than swallowing it', async () => {
+    const h = harness({
+      script: [{ afterMs: 150, text: 'first question', final: true }],
+      reply: REPLY,
+      failSynthesisCalls: 1,
+      micMs: 8_000,
+    });
+    await h.run();
+
+    expect(earcons(h.events)).toContain('failed');
+  });
+
+  it('ends the turn cleanly instead of parking in speaking', async () => {
+    const h = harness({
+      script: [{ afterMs: 150, text: 'first question', final: true }],
+      reply: REPLY,
+      failSynthesisCalls: 1,
+      micMs: 8_000,
+    });
+    await h.run();
+
+    // A loop stuck in `speaking` refuses the next turn's transitions, which is how
+    // a single failure turns into a session that no longer responds at all.
+    expect(h.bridge.state).toBe('idle');
+  });
+});

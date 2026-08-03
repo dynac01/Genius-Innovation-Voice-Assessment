@@ -31,7 +31,10 @@ export interface SessionOptions {
    * Deferred until `hello` arrives so the choice can be honoured on the very
    * first turn rather than the one after.
    */
-  readonly buildPipeline: (want?: PipelineSelection) => PipelineSetup;
+  readonly buildPipeline: (
+    want?: PipelineSelection,
+    log?: (kind: string, data?: Record<string, unknown>) => void,
+  ) => PipelineSetup;
   readonly available: PipelineAvailability;
   readonly send: (payload: string | ArrayBuffer) => void;
   readonly log?: (message: string) => void;
@@ -51,7 +54,9 @@ export class Session {
   }
 
   #build(want?: PipelineSelection): PipelineSelection {
-    const setup = this.#options.buildPipeline(want);
+    // Providers log into the same stream as everything else, so a stalled socket
+    // and the turn it stalled during appear next to each other in one file.
+    const setup = this.#options.buildPipeline(want, (kind, data) => this.#diag(kind, data));
     this.#bridge = new AudioBridge({
       pipeline: setup.pipeline,
       dialog: setup.dialog,

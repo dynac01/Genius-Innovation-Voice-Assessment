@@ -48,7 +48,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       sessionId,
       clock,
       // Built when the browser says what it wants, not up front.
-      buildPipeline: (want) => this.pipelines.build(clock, want),
+      buildPipeline: (want, log) => this.pipelines.build(clock, want, log),
       available: this.pipelines.available,
       send: (payload) => {
         if (socket.readyState === socket.OPEN) socket.send(payload);

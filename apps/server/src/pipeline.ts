@@ -183,10 +183,18 @@ function createLlm(clock: Clock, env: Env, choice: PipelineSelection['llm']): LL
   );
 }
 
-function createTts(clock: Clock, env: Env, choice: PipelineSelection['tts']): TTS {
+function createTts(
+  clock: Clock,
+  env: Env,
+  choice: PipelineSelection['tts'],
+  log?: ProviderLog,
+): TTS {
   if (choice === 'real') {
     return guardTts(
-      new DeepgramTts({ apiKey: env['DEEPGRAM_API_KEY'] ?? '' }),
+      new DeepgramTts({
+        apiKey: env['DEEPGRAM_API_KEY'] ?? '',
+        ...(log === undefined ? {} : { onLog: log }),
+      }),
       clock,
       'deepgram-tts',
     );
@@ -228,17 +236,20 @@ export interface PipelineSetup {
   readonly selected: PipelineSelection;
 }
 
+export type ProviderLog = (kind: string, data?: Record<string, unknown>) => void;
+
 export function createPipeline(
   clock: Clock,
   env: Env = {},
   want?: PipelineSelection,
+  log?: ProviderLog,
 ): PipelineSetup {
   const selected = resolveSelection(want ?? defaultSelection(env), env);
   const llm = createLlm(clock, env, selected.llm);
   const pipeline: Pipeline = {
     stt: createStt(clock, env, selected.stt),
     llm,
-    tts: createTts(clock, env, selected.tts),
+    tts: createTts(clock, env, selected.tts, log),
   };
 
   // The model sits behind the dialog, not inside the bridge. A more capable
