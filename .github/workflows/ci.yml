@@ -44,6 +44,42 @@ jobs:
       - name: Test (unit + feature)
         run: pnpm test
 
+      # "Must run in GitHub Codespaces" is a deliverable, and the way it breaks is
+      # invisible everywhere else: Vite rejects any Host it does not recognise, so a
+      # forwarded port answers 403 to every request including the page itself. It
+      # looks like a broken container rather than one missing config line, and no
+      # local run or normal CI job would ever see it.
+      #
+      # So the Host header is faked here. The negative case is checked too — an
+      # allow-list that has quietly become allow-everything passes the first
+      # assertion and fails the second.
+      - name: Runs behind a Codespaces forwarded port
+        run: |
+          pnpm dev > /tmp/dev.log 2>&1 &
+          # Both halves, not just Vite. Vite answers as soon as it binds, while the
+          # proxy targets a Nest server that is still booting — so waiting on the page
+          # alone makes the API and socket assertions race the backend and fail
+          # intermittently. Found by running this step locally rather than in review.
+          for i in $(seq 1 90); do
+            curl -sf -o /dev/null http://localhost:5173/ \
+              && curl -sf -o /dev/null http://localhost:8787/health \
+              && break || sleep 1
+          done
+
+          host=fictional-space-guide-5173.app.github.dev
+          page=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $host" http://localhost:5173/)
+          api=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $host" http://localhost:5173/api/health)
+          upgrade=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $host" \
+            -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
+            -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' --max-time 5 http://localhost:5173/ws)
+          blocked=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example.com' http://localhost:5173/)
+
+          echo "page=$page api=$api ws-upgrade=$upgrade unknown-host=$blocked"
+          [ "$page" = 200 ]     || { echo 'Codespaces host rejected — see server.allowedHosts'; cat /tmp/dev.log; exit 1; }
+          [ "$api" = 200 ]      || { echo 'API proxy rejected the forwarded host'; exit 1; }
+          [ "$upgrade" = 101 ]  || { echo 'WebSocket did not upgrade through the forwarded host'; exit 1; }
+          [ "$blocked" = 403 ]  || { echo 'allow-list is allowing everything'; exit 1; }
+
   # E2E is a separate job so a browser download never sits on the critical path of
   # the fast feedback loop. It is deliberately thin — see docs/TESTING.md.
   e2e:

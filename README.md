@@ -316,13 +316,32 @@ pnpm bench:latency     # prints the barge-in number. Never gated in CI
 
 ## Codespaces
 
-Open the repo in a Codespace — the devcontainer installs everything, and forwarded ports are HTTPS, which makes the page a **secure context**. That matters: `getUserMedia` refuses to run outside one, so the microphone genuinely works in a Codespace.
+Open the repo in a Codespace. The devcontainer installs everything and starts both
+halves on attach, so it opens on a running demo rather than on a terminal.
 
-```bash
-pnpm dev
-```
+Forwarded ports are HTTPS, which makes the page a **secure context** — and that is
+not a detail: `getUserMedia` refuses to run outside one, so this is the reason the
+microphone works in a Codespace at all.
 
-Then open the forwarded port for 5173.
+**Open port 5173 in a real browser tab**, not VS Code's built-in preview. That
+preview is a webview and `getUserMedia` in it is unreliable, which presents as a
+microphone that never opens and no clue why. The devcontainer is set to
+`openBrowser` for exactly that reason.
+
+One port is enough. The socket is proxied through the same origin as the page, so
+`wss://<name>-5173.app.github.dev/ws` works and 8787 never needs publishing — a
+second origin would make the socket cross-origin.
+
+Two settings make this work, and both fail in ways that look like something else:
+
+| | Why |
+|---|---|
+| `server.allowedHosts` | Vite rejects unrecognised `Host` headers as a DNS-rebinding guard. A forwarded port arrives as `<name>-5173.app.github.dev`, so without this **every request 403s, including the page** — which reads as a broken container rather than one config line |
+| `hmr.clientPort: 443` | A forwarded URL has no port, so the reload socket would otherwise dial `:5173` on a host that does not publish it. The app still runs; edits just stop refreshing |
+
+CI fakes a Codespaces `Host` header and asserts the page, the API proxy and the
+WebSocket upgrade all answer — and that an unknown host is still refused, so an
+allow-list that has quietly become allow-everything fails the build.
 
 ---
 

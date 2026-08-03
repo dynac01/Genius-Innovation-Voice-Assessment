@@ -11,6 +11,10 @@
   // so it is not repeated here. One source of truth, shared with CI.
   "postCreateCommand": "corepack enable && pnpm install --frozen-lockfile",
 
+  // Start both halves on attach, so a Codespace opens on a running demo rather than
+  // on a terminal and a README. `pnpm dev` runs the Nest server and Vite together.
+  "postAttachCommand": "pnpm dev",
+
   // Codespaces serves forwarded ports over HTTPS, which makes the page a secure
   // context — the precondition for getUserMedia. This is what lets the microphone
   // work in a Codespace, and why the demo is genuinely developable there.
@@ -18,7 +22,12 @@
   "portsAttributes": {
     "5173": {
       "label": "web (Vite)",
-      "onAutoForward": "openPreview"
+      // openBrowser, not openPreview. VS Code's embedded preview is a webview, and
+      // getUserMedia in it is unreliable at best — for a voice demo that means the
+      // microphone never opens and the cause is invisible. A real browser tab is
+      // also where the HTTPS forwarding becomes a secure context, which is the
+      // precondition for the microphone at all.
+      "onAutoForward": "openBrowser"
     },
     "8787": {
       "label": "server (HTTP + WebSocket)",
