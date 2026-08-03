@@ -107,6 +107,19 @@ function settleAll(lines: Line[]): Line[] {
   return lines.map((line) => (line.pending ? { ...line, pending: false } : line));
 }
 
+/**
+ * The result of the speaker test.
+ *
+ * Deliberately reports what was *measured*, not what the app hopes happened. The
+ * app can prove a tone was rendered; only the person in the room can say whether it
+ * arrived. Separating those two facts is the entire value of the test, so the UI
+ * states the measurement and asks for the other half rather than declaring success.
+ */
+export interface SpeakerTest {
+  readonly peak: number;
+  readonly rendered: boolean;
+}
+
 interface HealthResponse {
   readonly pipeline?: {
     readonly default?: PipelineSelection;
@@ -123,6 +136,10 @@ export function useVoiceSession(): {
   /** Records captured so far, so the download control can show its own weight. */
   logSize: number;
   saveLog: () => void;
+  /** Play a tone through the assistant's own output path. */
+  testSpeaker: () => void;
+  /** What the meter measured during the last test, or undefined if never run. */
+  speakerTest: SpeakerTest | undefined;
 } {
   const [state, setState] = useState<SessionState>(INITIAL);
   const [wanted, setWanted] = useState<PipelineSelection>(DEFAULT_WANTED);
@@ -134,6 +151,7 @@ export function useVoiceSession(): {
   // into React state would re-render the tree on every audio frame. Only the count
   // is state, and only so the button can show it.
   const [logSize, setLogSize] = useState(0);
+  const [speakerTest, setSpeakerTest] = useState<SpeakerTest | undefined>(undefined);
   useEffect(() => logRef.current.subscribe(() => setLogSize(logRef.current.size)), []);
 
   const engineRef = useRef<AudioEngine | undefined>(undefined);
@@ -493,6 +511,31 @@ export function useVoiceSession(): {
    * when the report was made without replaying every event to derive them, and
    * those counters are the first thing anyone looks at.
    */
+  /**
+   * Play a tone and watch the meter while it plays.
+   *
+   * Sampled over the tone's own duration rather than read once: a single reading
+   * can land in a zero crossing, and reporting "no signal" because of that would be
+   * worse than not testing at all.
+   */
+  const testSpeaker = useCallback(() => {
+    const engine = engineRef.current;
+    if (engine === undefined) return;
+    engine.playTestTone();
+    setSpeakerTest(undefined);
+
+    let peak = 0;
+    const started = performance.now();
+    const watch = window.setInterval(() => {
+      peak = Math.max(peak, engine.outputLevel);
+      if (performance.now() - started < 1_400) return;
+      window.clearInterval(watch);
+      const result = { peak: Math.round(peak * 1000) / 1000, rendered: peak > 0.005 };
+      logRef.current.record('browser', 'audio.test_tone.result', result);
+      setSpeakerTest(result);
+    }, 40);
+  }, []);
+
   const saveLog = useCallback(() => {
     const stamp = new Date().toISOString().replace(/[:.]/gu, '-');
     logRef.current.record('browser', 'log.saved');
@@ -519,5 +562,5 @@ export function useVoiceSession(): {
     );
   }, [state]);
 
-  return { state, wanted, start, stop, choose, logSize, saveLog };
+  return { state, wanted, start, stop, choose, logSize, saveLog, testSpeaker, speakerTest };
 }

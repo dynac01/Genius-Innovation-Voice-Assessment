@@ -14,7 +14,8 @@ const STAGES = [
 ] as const;
 
 export function App() {
-  const { state, wanted, start, stop, choose, logSize, saveLog } = useVoiceSession();
+  const { state, wanted, start, stop, choose, logSize, saveLog, testSpeaker, speakerTest } =
+    useVoiceSession();
 
   const secureContext = window.isSecureContext;
   const hasMediaDevices = typeof navigator.mediaDevices?.getUserMedia === 'function';
@@ -160,6 +161,35 @@ export function App() {
             className="meter-fill"
             style={{ width: `${Math.min(100, state.outputLevel * 140).toFixed(0)}%` }}
           />
+        </div>
+
+        {/*
+          The speaker test.
+
+          Everything upstream of the speaker can be verified from inside the app;
+          whether a human hears it cannot. This removes every variable except that
+          last one — no provider, no network, no synthesis, no barge-in — and then
+          says only what it can honestly say: whether the tone was rendered. The
+          other half of the answer has to come from the person in the room, so the
+          UI asks for it rather than declaring victory.
+        */}
+        <div className="meter-test">
+          <button
+            type="button"
+            className="link"
+            data-testid="test-speaker"
+            disabled={state.phase !== 'running'}
+            onClick={testSpeaker}
+          >
+            Play test tone
+          </button>
+          {speakerTest !== undefined && (
+            <span className="meter-verdict" data-testid="test-speaker-result">
+              {speakerTest.rendered
+                ? `Tone rendered at ${speakerTest.peak.toFixed(2)} — if you did not hear it, the fault is your system output, not this app`
+                : 'No signal produced — the fault is in this app'}
+            </span>
+          )}
         </div>
       </section>
 

@@ -34,6 +34,12 @@ const JITTER_BUFFER_MS = 120;
 /** Fade applied on barge-in. A hard cut at a non-zero sample is an audible click. */
 const STOP_RAMP_MS = 12;
 
+/** How often the output meter is written to the log while audio is active. */
+const METER_SAMPLE_MS = 250;
+
+/** Peak below this is indistinguishable from an all-zero buffer. */
+const SILENCE_LEVEL = 0.005;
+
 export type MicPermission = 'unknown' | 'granted' | 'denied' | 'unavailable';
 
 export interface AudioEngineHandlers {
@@ -106,6 +112,12 @@ export class AudioEngine {
   #log: ((kind: string, data?: unknown) => void) | undefined;
   #playCount = 0;
   #wasSpeaking = false;
+  #meterTimer: ReturnType<typeof setInterval> | undefined;
+  #toneUntil = 0;
+  #levelPeak = 0;
+  #levelTicks = 0;
+  #levelAudibleTicks = 0;
+  #wasActive = false;
   #meterFrame: Float32Array<ArrayBuffer> | undefined;
   #lastBargeIn: BargeInMeasurement | undefined;
 
@@ -327,6 +339,108 @@ export class AudioEngine {
     this.#meter = meter;
     this.#meterFrame = new Float32Array(meter.fftSize);
     this.#nextStartAt = 0;
+
+    /*
+     * Record what actually left the graph, not what we meant to send.
+     *
+     * Every other record in this engine describes an intention — a buffer was
+     * created, a time was scheduled, a gain was set — and a fault report built
+     * entirely out of intentions cannot distinguish "the app produced no sound"
+     * from "the app produced sound and something downstream ate it". Three rounds
+     * of diagnosis were spent inside that gap. The analyser has been reading real
+     * samples the whole time and nothing was writing them down.
+     *
+     * Sampled on a timer rather than per frame: level is a continuous quantity, the
+     * question is only ever "moving or flat", and one record per audio frame would
+     * bury the log in the exact situation it is needed.
+     */
+    this.#meterTimer = setInterval(() => {
+      const active = this.outputActive || this.#toneUntil > context.currentTime;
+      const level = this.outputLevel;
+
+      if (active) {
+        this.#levelPeak = Math.max(this.#levelPeak, level);
+        this.#levelTicks += 1;
+        if (level > SILENCE_LEVEL) this.#levelAudibleTicks += 1;
+        this.#log?.('audio.level', {
+          peak: Math.round(level * 1000) / 1000,
+          queued: this.#scheduled.length,
+          gain: Math.round((this.#output?.gain.value ?? 0) * 1000) / 1000,
+          contextState: context.state,
+        });
+        this.#wasActive = true;
+        return;
+      }
+
+      // The run just ended: one line that answers the whole question.
+      if (this.#wasActive) {
+        this.#wasActive = false;
+        this.#log?.('audio.level.summary', {
+          peak: Math.round(this.#levelPeak * 1000) / 1000,
+          ticks: this.#levelTicks,
+          audibleTicks: this.#levelAudibleTicks,
+          verdict:
+            this.#levelPeak > SILENCE_LEVEL
+              ? 'signal reached the speaker output'
+              : 'NO SIGNAL — nothing left the audio graph',
+        });
+        this.#levelPeak = 0;
+        this.#levelTicks = 0;
+        this.#levelAudibleTicks = 0;
+      }
+    }, METER_SAMPLE_MS);
+  }
+
+  /**
+   * Play a plain tone through the speech output, on demand.
+   *
+   * The decisive experiment, and it should have existed three rounds of diagnosis
+   * ago. Everything upstream of the speaker can be verified from here; whether a
+   * human hears it cannot. This closes that by removing every variable except the
+   * last one — no provider, no network, no synthesis, no barge-in, just a sine wave
+   * through the same gain node the assistant's voice uses.
+   *
+   * It makes the answer binary. Silence here means the fault is below this code:
+   * a muted tab, a system output pointed somewhere else, a device volume. Sound
+   * here with silence during a reply means the fault is mine, and narrows it to the
+   * path between synthesis and this node.
+   */
+  playTestTone(seconds = 1.2, frequency = 440): void {
+    const context = this.#context;
+    const output = this.#output;
+    if (context === undefined || output === undefined) return;
+
+    const length = Math.floor(context.sampleRate * seconds);
+    const buffer = context.createBuffer(1, length, context.sampleRate);
+    const channel = buffer.getChannelData(0);
+    // Faded at both ends: a tone that starts and stops at a non-zero sample clicks,
+    // and a click is exactly the kind of "was that it?" ambiguity this must avoid.
+    const fade = Math.floor(context.sampleRate * 0.02);
+    for (let i = 0; i < length; i += 1) {
+      const envelope = Math.min(1, i / fade, (length - i) / fade);
+      channel[i] = Math.sin((2 * Math.PI * frequency * i) / context.sampleRate) * 0.25 * envelope;
+    }
+
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(output);
+
+    // Re-assert audibility: a previous flush must not silence a diagnostic whose
+    // entire purpose is to tell you whether the output is silenced.
+    const startAt = context.currentTime + 0.05;
+    output.gain.cancelScheduledValues(startAt);
+    output.gain.setValueAtTime(1, startAt);
+    source.start(startAt);
+
+    this.#toneUntil = startAt + seconds;
+    this.#log?.('audio.test_tone', {
+      seconds,
+      frequency,
+      contextState: context.state,
+      contextRate: context.sampleRate,
+      gain: output.gain.value,
+      destinationChannels: context.destination.channelCount,
+    });
   }
 
   /**
@@ -508,6 +622,8 @@ export class AudioEngine {
     this.#sink?.disconnect();
     this.#output?.disconnect();
     this.#meter?.disconnect();
+    if (this.#meterTimer !== undefined) clearInterval(this.#meterTimer);
+    this.#meterTimer = undefined;
     this.#earcons?.disconnect();
     this.#race.reset();
     this.#assistantActive = false;

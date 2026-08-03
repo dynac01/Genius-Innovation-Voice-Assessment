@@ -359,3 +359,34 @@ h2 {
   font-size: 0.8em;
   color: var(--muted);
 }
+
+.meter-test {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.meter-test .link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.meter-test .link:disabled {
+  color: var(--muted);
+  cursor: default;
+  text-decoration: none;
+}
+
+.meter-verdict {
+  font-size: 0.78rem;
+  color: var(--muted);
+  flex: 1 1 12rem;
+}

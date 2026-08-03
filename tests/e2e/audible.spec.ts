@@ -119,3 +119,63 @@ test('a reply reaches the speaker as signal, not just as frames', async ({ page 
   expect(probe?.state).toBe('running');
   expect(probe?.sampleRate ?? 0).toBeGreaterThanOrEqual(8_000);
 });
+
+/**
+ * The instrumentation has to answer the question, not restate the intention.
+ *
+ * Three rounds of diagnosis were spent on logs that recorded only what the app
+ * meant to do — a buffer created, a time scheduled, a gain set. All of it can be
+ * true while the room stays silent, so none of it distinguishes "produced no sound"
+ * from "produced sound that went somewhere else". These two tests pin the records
+ * that close that gap, because a diagnostic nobody asserts on is a diagnostic that
+ * quietly stops working.
+ */
+test('the log records what left the graph, not just what was scheduled', async ({ page }) => {
+  test.setTimeout(60_000);
+
+  await page.goto('/');
+  await page.getByTestId('session-toggle').click();
+
+  await expect
+    .poll(async () => Number(await page.getByTestId('frames-received').innerText()), {
+      timeout: 25_000,
+    })
+    .toBeGreaterThan(0);
+
+  // Let a reply play out so a run of audio begins and ends.
+  await page.waitForTimeout(4_000);
+
+  const download = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByTestId('download-log').click(),
+  ]).then(([event]) => event);
+
+  const { readFile } = await import('node:fs/promises');
+  const path = await download.path();
+  const parsed = JSON.parse(await readFile(path, 'utf8')) as {
+    log: { kind: string; data?: Record<string, unknown> }[];
+  };
+
+  const levels = parsed.log.filter((r) => r.kind === 'audio.level');
+  expect(levels.length, 'no measured output levels in the log').toBeGreaterThan(0);
+
+  // The measurement must be of real samples, not a restatement of the gain.
+  const peaks = levels.map((r) => Number(r.data?.['peak'] ?? 0));
+  expect(Math.max(...peaks), 'meter never registered any signal').toBeGreaterThan(0.005);
+});
+
+test('the speaker test reports a measurement, not a hope', async ({ page }) => {
+  test.setTimeout(60_000);
+
+  await page.goto('/');
+  await page.getByTestId('session-toggle').click();
+  await expect(page.getByTestId('phase')).toHaveText('running', { timeout: 25_000 });
+
+  await page.getByTestId('test-speaker').click();
+
+  const verdict = page.getByTestId('test-speaker-result');
+  await expect(verdict).toBeVisible({ timeout: 15_000 });
+  // The tone goes through the assistant's own gain node, so a pass here is evidence
+  // about the real path rather than about a separate one built for the test.
+  await expect(verdict).toContainText('Tone rendered');
+});
