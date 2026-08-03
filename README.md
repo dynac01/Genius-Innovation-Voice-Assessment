@@ -135,14 +135,15 @@ One known, unfixed cost: **the first request of a process pays ~4 s of TLS and c
 
 ### Endpointing and detection windows
 
-| Setting | Value | Why |
-|---|---|---|
-| End-of-turn silence | 700 ms | Above conversational hesitation (200–500 ms), below where a reply feels sluggish |
-| Pause reported | 300 ms | Told to the dialog as information; does **not** end the turn |
-| VAD onset | 250 ms | Minimum-duration guard. Was 50 ms, which bought a fast headline number by firing on doors, chairs and room tone |
-| VAD release | 250 ms | Long enough to span the gaps between words |
-| Speech threshold | 9 dB over noise floor | |
-| Threshold while assistant audible | 16 dB | Echo guard — see [Tradeoffs](#tradeoffs) |
+| Setting | Fakes | Real STT | Why |
+|---|---|---|---|
+| End-of-turn silence | 700 ms | 2500 ms | With a real STT the provider's own endpointing (`endpointing=800`, `utterance_end_ms=1200`) decides; this is only the backstop for when it never speaks |
+| Pause reported | 300 ms | 700 ms | Told to the dialog as information; does **not** end the turn |
+| VAD onset | 250 ms | — | Minimum-duration guard. Was 50 ms, which bought a fast headline number by firing on doors, chairs and room tone |
+| VAD release | 250 ms | — | Long enough to span the gaps between words |
+| Speech threshold | 12 dB over noise floor | — | Adaptive: raises the bar in a noisy room |
+| Absolute speech gate | −40 dBFS | — | Floor under the adaptive one. Without it a quiet room drags the threshold down to meet its own ambient tone |
+| Threshold while assistant audible | 24 dB | — | Echo guard — see [Tradeoffs](#tradeoffs) |
 
 **Endpointing and barge-in are opposite-biased detectors on the same microphone.** One wants a quarter second of sustained voice and errs toward firing; the other wants most of a second of silence and errs against it. They cannot share tuning, so they do not share code.
 
@@ -222,6 +223,32 @@ So `AudioChunk` carries the character span it renders, and the bridge tracks the
 
 ---
 
+## Diagnostics
+
+Audio fails quietly. A muted node, a rate the device will not run, a decoder that
+copies nothing — none of them throw, and every counter stays green while the room
+is silent. Each of those actually happened here, and each cost a round trip of
+guessing because the instruments recorded what the code *intended* rather than what
+it *produced*.
+
+So the app measures effect, in three places:
+
+| | What it answers |
+|---|---|
+| **Speaker output** meter | Is signal reaching the speaker *right now* — sampled from an `AnalyserNode` on the speech gain node, not inferred from state |
+| **Play test tone** | Removes every variable but one. A sine through the assistant's own gain node: no provider, no network, no synthesis, no barge-in. Silence here puts the fault below the app — a muted tab, a system output pointed elsewhere |
+| **Download logs** | Both sides of the socket in one file — client events, server diagnostics relayed over the wire, engine lifecycle, VAD edges, measured output levels, and the RMS of the PCM each provider returned |
+
+The log is the one that matters for a bug report, and the field that earns its keep
+is the least glamorous: `tts.audio { rms, silent }`. "A frame of 960 samples
+arrived" is equally true of speech and of silence, so a log full of shapes cannot
+tell a synthesiser that returned nothing from a playback path that lost it. One
+number does.
+
+Nothing is transmitted anywhere. The button writes a file.
+
+---
+
 ## Testing
 
 Four tiers. Full rationale in [docs/TESTING.md](docs/TESTING.md).
@@ -251,7 +278,7 @@ pnpm bench:latency     # prints the barge-in number. Never gated in CI
 
 | # | Criterion | |
 |---|---|---|
-| 1 | Barge-in stops immediately | tested + **70 ms measured** |
+| 1 | Barge-in stops immediately | tested + **271 ms measured** |
 | 2 | Resume an interrupted reply | tested |
 | 3 | Fresh turn after interruption | tested |
 | 4 | Endpointing | tested |

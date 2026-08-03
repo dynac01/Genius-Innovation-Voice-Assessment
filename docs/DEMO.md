@@ -79,6 +79,23 @@ git show b397115 --stat -- packages/core/
 
 Empty. Three real providers, zero changes to the loop. That is criterion 7 in its strongest form, and it takes ten seconds to show.
 
+### 6. No silent failures — if you want a strong closing beat
+
+The evaluation lists *"no silent failures"* explicitly, and this is the cheapest way
+to show it rather than assert it.
+
+Point at the **Speaker output** meter while a reply plays — it is measuring real
+samples off the speech node, not reporting a state flag. Then hit **Play test tone**:
+it strips out every variable but the last one and says what it measured rather than
+what it hopes.
+
+Worth one sentence on why it exists: audio fails without throwing, so a counter that
+says "frame delivered" stays green through a muted node, an unplayable rate, or a
+decoder that copies nothing. Every one of those happened while building this. The
+log records the RMS of the PCM each provider returned, which is what separates "the
+synthesiser sent nothing" from "playback lost it" — and that distinction took far
+too long to make without it.
+
 ### Optional, if it fits
 
 - **Sustained silence** — leave it running and say nothing. No spurious response.
