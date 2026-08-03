@@ -37,7 +37,10 @@ export { DEFAULT_ENDPOINTER, Endpointer } from './endpointer.js';
 export type { ChunkerConfig } from './chunker.js';
 export { ClauseChunker, DEFAULT_CHUNKER } from './chunker.js';
 
-export type { LoopEvent, VoiceLoopOptions } from './loop.js';
+export type { VadConfig, VadEvent } from './vad.js';
+export { DEFAULT_VAD, Vad, frameLevelDb } from './vad.js';
+
+export type { InterruptedReply, LoopEvent, VoiceLoopOptions } from './loop.js';
 export { VoiceLoop } from './loop.js';
 
 export type { AudioFrame, ClientEvent, ServerEvent } from './wire.js';

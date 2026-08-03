@@ -9,6 +9,8 @@
  * docs/TESTING.md §2.
  */
 
+import { DEFAULT_VAD, Vad } from '@voice/core';
+
 /** Requested capture rate. Most browsers honour it; we report whatever we get. */
 const PREFERRED_SAMPLE_RATE = 16_000;
 
@@ -33,6 +35,31 @@ export type MicPermission = 'unknown' | 'granted' | 'denied' | 'unavailable';
 export interface AudioEngineHandlers {
   onFrame: (pcm: Int16Array) => void;
   onPermissionChange?: (permission: MicPermission) => void;
+  /**
+   * The user started speaking while the assistant was audible.
+   *
+   * Fired *after* output has already been silenced locally. The server is being
+   * told what happened, not asked what to do — asking would spend the entire
+   * latency budget on a round trip before anything stopped.
+   */
+  onBargeIn?: (measurement: BargeInMeasurement) => void;
+}
+
+/**
+ * A measured barge-in, in milliseconds.
+ *
+ * Both numbers come from the audio clock, so neither includes thread-hop
+ * guesswork — but they measure different things and the distinction matters:
+ *
+ * - `detectToSilent` is what the machine did: the frame that tripped the detector
+ *   completed at a known audio time, and the gain ramp finishes at another.
+ * - `onsetToSilent` adds the evidence the detector needed before it could fire.
+ *   The user started talking roughly `onsetMs` before detection, so this is the
+ *   honest end-to-end figure — the one to compare against the ~300ms target.
+ */
+export interface BargeInMeasurement {
+  readonly detectToSilent: number;
+  readonly onsetToSilent: number;
 }
 
 export class MicrophoneError extends Error {
@@ -59,6 +86,8 @@ export class AudioEngine {
   #output: GainNode | undefined;
   #scheduled: Scheduled[] = [];
   #nextStartAt = 0;
+  readonly #vad = new Vad();
+  #lastBargeIn: BargeInMeasurement | undefined;
 
   get sampleRate(): number {
     return this.#context?.sampleRate ?? 0;
@@ -66,6 +95,15 @@ export class AudioEngine {
 
   get running(): boolean {
     return this.#context?.state === 'running';
+  }
+
+  get lastBargeIn(): BargeInMeasurement | undefined {
+    return this.#lastBargeIn;
+  }
+
+  /** True while assistant audio is scheduled at or ahead of the playhead. */
+  get outputActive(): boolean {
+    return this.bufferedAheadMs > 0;
   }
 
   /**
@@ -99,8 +137,26 @@ export class AudioEngine {
       channelCount: 1,
       processorOptions: { frameSamples: CAPTURE_FRAME_SAMPLES },
     });
-    capture.port.onmessage = (event: MessageEvent<Int16Array>) => {
-      handlers.onFrame(event.data);
+    const frameMs = (CAPTURE_FRAME_SAMPLES / context.sampleRate) * 1000;
+    capture.port.onmessage = (event: MessageEvent<{ pcm: Int16Array; capturedAt: number }>) => {
+      const { pcm, capturedAt } = event.data;
+
+      // Run the detector before forwarding. Barge-in is decided here, in the
+      // browser, because the round trip alone would exhaust the latency budget.
+      const wasSpeaking = this.outputActive;
+      this.#vad.setOutputActive(wasSpeaking);
+      const verdict = this.#vad.process(pcm, frameMs);
+
+      if (verdict === 'speech_start' && wasSpeaking) {
+        const silentAt = this.flush();
+        this.#lastBargeIn = {
+          detectToSilent: Math.max(0, (silentAt - capturedAt) * 1000),
+          onsetToSilent: Math.max(0, (silentAt - capturedAt) * 1000) + DEFAULT_VAD.onsetMs,
+        };
+        handlers.onBargeIn?.(this.#lastBargeIn);
+      }
+
+      handlers.onFrame(pcm);
     };
 
     // A muted sink keeps the worklet pulled by the graph without routing the
@@ -160,10 +216,10 @@ export class AudioEngine {
    * finished. The brief asks for no audio tail; a hard cut mid-waveform produces a
    * click, which is its own kind of tail.
    */
-  flush(): void {
+  flush(): number {
     const context = this.#context;
     const output = this.#output;
-    if (context === undefined || output === undefined) return;
+    if (context === undefined || output === undefined) return 0;
 
     const now = context.currentTime;
     const rampEnd = now + STOP_RAMP_MS / 1000;
@@ -185,6 +241,9 @@ export class AudioEngine {
     // Restore gain strictly after every stop has taken effect, so the next reply is
     // audible without unmuting anything still in flight.
     output.gain.setValueAtTime(1, rampEnd + 0.001);
+
+    // The audio-clock time at which output is genuinely silent.
+    return rampEnd;
   }
 
   /** Seconds of assistant audio still queued ahead of the playhead. */

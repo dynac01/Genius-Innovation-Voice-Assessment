@@ -30,7 +30,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install --with-deps chromium",
-    "bench:latency": "echo 'Latency harness lands in Phase 4. See docs/TESTING.md.' && exit 1",
+    "bench:latency": "playwright test --config playwright.latency.config.ts",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
   },
   "devDependencies": {

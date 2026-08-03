@@ -86,6 +86,16 @@ export function App() {
           <dd>{state.connectMs === undefined ? '—' : `${state.connectMs} ms`}</dd>
         </div>
         <div>
+          <dt>Barge-in stop</dt>
+          <dd data-testid="barge-in-ms">
+            {state.bargeInMs === undefined ? '—' : `${state.bargeInMs} ms`}
+          </dd>
+        </div>
+        <div>
+          <dt>Barge-ins</dt>
+          <dd data-testid="barge-in-count">{state.bargeIns}</dd>
+        </div>
+        <div>
           <dt>Transcript → audio</dt>
           <dd data-testid="response-latency">
             {state.responseLatencyMs === undefined ? '—' : `${state.responseLatencyMs} ms`}

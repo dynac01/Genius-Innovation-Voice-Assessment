@@ -33,7 +33,12 @@ class CaptureProcessor extends AudioWorkletProcessor {
 
       if (this._filled === this._frame.length) {
         const out = this._frame.slice();
-        this.port.postMessage(out, [out.buffer]);
+        // `currentTime` is the audio clock at the start of this render quantum —
+        // the same clock the playback ramp is scheduled against. Stamping the frame
+        // here is what makes the barge-in measurement real rather than inferred:
+        // capture and stop are then two readings of one clock, with no thread-hop
+        // guesswork in between.
+        this.port.postMessage({ pcm: out, capturedAt: currentTime }, [out.buffer]);
         this._filled = 0;
       }
     }

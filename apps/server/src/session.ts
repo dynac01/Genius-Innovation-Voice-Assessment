@@ -55,10 +55,11 @@ export class Session {
         this.close();
         break;
       case 'interrupt':
-        // Phase 4 acts on this. The browser has already silenced its own output by
-        // the time this arrives — the round trip decides what the interruption
-        // *meant*, never whether to stop.
+        // The browser has already silenced its own output by the time this arrives.
+        // This is the slow path: abandon generation and synthesis, and record what
+        // the user actually heard so Phase 5 can resume from it.
         this.#log(`interrupt at t=${event.t}`);
+        this.#loop.interrupt(event.t);
         break;
     }
   }
@@ -96,6 +97,12 @@ export class Session {
     switch (event.type) {
       case 'audio':
         this.#sendAudio(event.chunk);
+        break;
+      case 'interrupted':
+        // Tell the browser to drop anything still queued. It has already ramped its
+        // own output down locally; this clears frames that were in flight.
+        this.#emit({ type: 'flush_audio' });
+        this.#log(`interrupted after ${event.spokenChars} chars`);
         break;
       case 'pause_detected':
         // Becomes a `pause_detected` on the bridge protocol once the dialog layer

@@ -21,6 +21,9 @@ export interface SessionState {
   /** Final transcript → first assistant audio. The baseline Phase 2 records. */
   responseLatencyMs: number | undefined;
   connectMs: number | undefined;
+  /** Measured barge-in: user onset → assistant audio silent. */
+  bargeInMs: number | undefined;
+  bargeIns: number;
 }
 
 const INITIAL: SessionState = {
@@ -36,6 +39,8 @@ const INITIAL: SessionState = {
   framesReceived: 0,
   responseLatencyMs: undefined,
   connectMs: undefined,
+  bargeInMs: undefined,
+  bargeIns: 0,
 };
 
 /**
@@ -142,6 +147,16 @@ export function useVoiceSession(): {
           setState((prev) => ({ ...prev, framesSent: prev.framesSent + 1 }));
         },
         onPermissionChange: (permission) => setState((prev) => ({ ...prev, permission })),
+        onBargeIn: (measurement) => {
+          // Output is already silent by the time this runs. The socket is being
+          // told what happened so the loop can decide what it *meant*.
+          socket.sendEvent({ type: 'interrupt', t: Math.round(performance.now()) });
+          setState((prev) => ({
+            ...prev,
+            bargeInMs: Math.round(measurement.onsetToSilent),
+            bargeIns: prev.bargeIns + 1,
+          }));
+        },
       })
       .then(() => {
         setState((prev) => ({ ...prev, sampleRate: engine.sampleRate }));

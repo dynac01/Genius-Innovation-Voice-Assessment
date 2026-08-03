@@ -1,6 +1,6 @@
 # Voice Conversation — Ordered Work Plan
 
-**Status:** Phases 0–3 complete. Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
+**Status:** Phases 0–4 complete. Barge-in measured at **70–78ms** (target <300ms). Two items need a human: Codespaces, and the phone half of the Phase 2 risk gate.
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [TESTING.md](TESTING.md)
 
@@ -141,35 +141,55 @@ weighted criterion; budget accordingly.
 
 **Fast path — client (target <100ms perceived):**
 
-- [ ] Local VAD on the captured PCM, tuned for ~50ms speech onset
-- [ ] On detection: gain ramps to zero over 10–15ms **(a ramp, not a hard cut — no click)**
-- [ ] Discard buffered-but-unplayed audio immediately
-- [ ] Notify the server of the local interrupt
+- [x] Local VAD on the captured PCM, tuned for ~50ms speech onset
+- [x] On detection: gain ramps to zero over 10–15ms **(a ramp, not a hard cut — no click)**
+- [x] Discard buffered-but-unplayed audio immediately
+- [x] Notify the server of the local interrupt
 
 **Slow path — server (semantics, async):**
 
-- [ ] Bridge emits `interrupt` to the dialog
-- [ ] Dialog responds with `barge_in: stop | pause | finish`
-- [ ] TTS emission halts **on the next chunk**, not after the current sentence
+- [x] Bridge emits `interrupt` to the dialog
+- [x] Dialog responds with `barge_in: stop | pause | finish`
+- [x] TTS emission halts **on the next chunk**, not after the current sentence
 
 **Echo suppression:**
 
-- [ ] Adaptive energy threshold on top of browser AEC, so the assistant's own voice does not
+- [x] Adaptive energy threshold on top of browser AEC, so the assistant's own voice does not
       self-interrupt ([DESIGN.md §4.4](DESIGN.md#44-echo--false-barge-in))
 - [ ] Verify on a phone with speakerphone on — the worst case, and the one that fails
 
 **Verification:**
 
-- [ ] **Unit:** barge-in onset decision — given an energy envelope, is this speech?
-- [ ] **Unit:** echo-gate threshold adaptation
-- [ ] **Feature:** an `interrupt` from the bridge stops TTS emission on the next chunk **(criterion 1)**
-- [ ] **Latency harness** (`tests/latency/`) — instrument speech onset → assistant audio silent.
+- [x] **Unit:** barge-in onset decision — given an energy envelope, is this speech?
+- [x] **Unit:** echo-gate threshold adaptation
+- [x] **Feature:** an `interrupt` from the bridge stops TTS emission on the next chunk **(criterion 1)**
+- [x] **Latency harness** (`tests/latency/`) — instrument speech onset → assistant audio silent.
       Measured locally and on the deployed URL; **never gated in CI**
       ([TESTING.md §6](TESTING.md#6-latency--measured-never-gated))
-- [ ] Commit to a stated target in the README and show the measurement that meets it
+- [x] Commit to a stated target in the README and show the measurement that meets it
 
 **Done when:** cutting the assistant off mid-sentence in a real browser stops it instantly with
 no audible tail, criterion 1 has a passing control-flow test, and we have a measured number.
+
+**Measured: 70–78ms** across four runs (onset → output silent), against a stated target of
+<300ms. Instrument: `pnpm bench:latency`, driving a real Chromium with a WAV stimulus — four
+seconds of silence, then a speech-shaped burst timed to land mid-reply. Both endpoints are read
+from the same audio clock, so the figure carries no thread-hop guesswork.
+
+Budget, and where the number comes from:
+
+| Stage | ms | Source |
+|---|---|---|
+| VAD onset evidence | 50 | `DEFAULT_VAD.onsetMs` — configured |
+| Frame period + dispatch | ~8–16 | measured |
+| Gain ramp to zero | 12 | `STOP_RAMP_MS` — configured |
+| **Total** | **70–78** | measured |
+
+The ~120ms jitter buffer never appears: buffered audio is discarded rather than played out,
+so it costs queue depth, not stop latency.
+
+**Not yet verified on a phone.** Echo through a phone speaker is the case that breaks this, and
+it is a threshold-tuning question (`duckedThresholdDb`), not an architectural one.
 
 ---
 

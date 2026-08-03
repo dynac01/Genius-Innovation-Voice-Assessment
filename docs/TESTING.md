@@ -1,6 +1,6 @@
 # Voice Conversation — Testing Strategy
 
-**Status:** all four tiers established; unit and feature populated through Phase 3
+**Status:** all four tiers populated through Phase 4; latency harness reporting real numbers
 **Last updated:** 2026-08-02
 **Companion docs:** [DESIGN.md](DESIGN.md) · [WORKPLAN.md](WORKPLAN.md)
 
@@ -180,7 +180,7 @@ Measured locally and against the deployed URL, recorded in the README:
 
 | Measurement | Target | Method |
 |---|---|---|
-| Barge-in stop (user speech onset → assistant audio silent) | <~300ms, no tail | Client-side timestamps around the gain ramp |
+| Barge-in stop (user speech onset → assistant audio silent) | <300ms, no tail | **Measured 70–78ms.** Audio-clock readings at frame capture and at ramp end |
 | End-of-turn → first assistant audio | stated in README | Timestamps across the loop |
 | STT partial → transcript update | stated in README | Client render timestamps |
 
@@ -210,10 +210,10 @@ neither substitutes for the other.
 
 | Tier | Status |
 |---|---|
-| Unit | 122 passing — clock, audio, wire codec, queue, turn machine, endpointer, chunker, fakes |
-| Feature | 14 passing — scripted conversation, plus the loop's control flow (criteria 4 and 5) |
+| Unit | 139 passing — clock, audio, wire codec, queue, turn machine, endpointer, chunker, VAD, fakes |
+| Feature | 22 passing — scripted conversation, loop control flow (criteria 4, 5), barge-in (criterion 1) |
 | E2E | 1 passing — browser preconditions, no console errors |
-| Latency | harness lands in Phase 4 |
+| Latency | `pnpm bench:latency` — barge-in stop **70–78ms**, target <300ms |
 
 The unit tier covers the harness itself first: the virtual clock's ordering
 guarantees, and each fake's timing behaviour. A timing assertion is only worth as

@@ -29,7 +29,7 @@ import type { Message } from './messages.js';
 import type { Pipeline } from './pipeline.js';
 import type { EarconSound } from './protocol.js';
 import type { TurnEvent, TurnState } from './turn.js';
-import { TurnMachine } from './turn.js';
+import { TurnMachine, accepts } from './turn.js';
 
 export type LoopEvent =
   | { type: 'state'; state: TurnState }
@@ -38,7 +38,22 @@ export type LoopEvent =
   | { type: 'audio'; chunk: AudioChunk }
   | { type: 'earcon'; sound: EarconSound }
   | { type: 'pause_detected'; at: number }
+  | { type: 'interrupted'; at: number; reply: string; spokenChars: number }
   | { type: 'error'; message: string };
+
+/**
+ * What the user actually heard of a reply that was cut off.
+ *
+ * `spokenChars` indexes into `reply` — everything before it reached the speaker,
+ * everything after it did not. This is the resume point criterion 2 turns on, and
+ * it is deliberately *not* the generation cursor: the model runs ahead of the
+ * synthesiser, which runs ahead of the playhead, so where generation stopped and
+ * where hearing stopped are different places.
+ */
+export interface InterruptedReply {
+  readonly reply: string;
+  readonly spokenChars: number;
+}
 
 export interface VoiceLoopOptions {
   readonly pipeline: Pipeline;
@@ -59,6 +74,10 @@ export class VoiceLoop {
   readonly #endpointer: Endpointer;
   readonly #history: Message[] = [];
   #timerGeneration = 0;
+  #replyGeneration = 0;
+  #replyText = '';
+  #spokenChars = 0;
+  #interrupted: InterruptedReply | undefined;
   #stopped = false;
 
   constructor(options: VoiceLoopOptions) {
@@ -76,6 +95,39 @@ export class VoiceLoop {
   /** Conversation so far, excluding any system prompt. */
   get transcript(): readonly Message[] {
     return this.#history.filter((message) => message.role !== 'system');
+  }
+
+  /** What the user heard of the last reply that was cut off, if any. */
+  get interrupted(): InterruptedReply | undefined {
+    return this.#interrupted;
+  }
+
+  /**
+   * The user started talking over the assistant.
+   *
+   * By the time this arrives the browser has already silenced its own output — the
+   * round trip decides what the interruption *meant*, never whether to stop. What
+   * happens here is the server-side half: abandon generation and synthesis, and
+   * record how far the reply actually got.
+   *
+   * The generation counter is checked inside the chunk loop, so emission stops on
+   * the next chunk rather than at the end of the current sentence. That distinction
+   * is criterion 1, and it is the difference between a clean cut and a tail.
+   */
+  interrupt(at: number): void {
+    if (!accepts(this.#turn.state, { type: 'interrupt' })) {
+      this.#options.onWarning?.(`interrupt ignored while ${this.#turn.state}`);
+      return;
+    }
+    this.#replyGeneration += 1;
+    this.#interrupted = { reply: this.#replyText, spokenChars: this.#spokenChars };
+    this.#emit({
+      type: 'interrupted',
+      at,
+      reply: this.#replyText,
+      spokenChars: this.#spokenChars,
+    });
+    this.#apply({ type: 'interrupt' });
   }
 
   /** Runs until the microphone stream ends or {@link stop} is called. */
@@ -165,28 +217,41 @@ export class VoiceLoop {
     this.#emit({ type: 'earcon', sound: 'accepted' });
     this.#history.push({ role: 'user', content: text });
 
+    const generation = (this.#replyGeneration += 1);
+    this.#replyText = '';
+    this.#spokenChars = 0;
+    this.#interrupted = undefined;
+
     const speech = new AsyncQueue<string>();
     const chunker = new ClauseChunker(this.#options.chunker ?? {});
 
     // Started before the model is consumed, so synthesis of chunk one overlaps
     // generation of chunk two. This is criterion 5.
-    const speaking = this.#speakAll(speech);
+    const speaking = this.#speakAll(speech, generation);
     let speakingFailure: unknown;
     void speaking.catch((error: unknown) => {
       speakingFailure = error;
       speech.close();
     });
 
-    let reply = '';
     try {
       for await (const delta of this.#options.pipeline.llm.respond([...this.#history])) {
+        // An interruption abandons generation too, not just playback: continuing to
+        // pay for tokens nobody will hear is the same mistake as a late stop.
         if (this.#stopped || speakingFailure !== undefined) break;
-        reply += delta.text;
+        if (generation !== this.#replyGeneration) break;
+        this.#replyText += delta.text;
         this.#emit({ type: 'assistant_text', text: delta.text });
         for (const chunk of chunker.push(delta.text)) speech.push(chunk);
       }
       const tail = chunker.flush();
-      if (tail !== undefined && speakingFailure === undefined) speech.push(tail);
+      if (
+        tail !== undefined &&
+        speakingFailure === undefined &&
+        generation === this.#replyGeneration
+      ) {
+        speech.push(tail);
+      }
     } catch (error) {
       speech.close();
       await speaking.catch(() => undefined);
@@ -202,18 +267,36 @@ export class VoiceLoop {
       return;
     }
 
-    if (reply !== '') this.#history.push({ role: 'assistant', content: reply });
+    // An interrupt already moved the machine back to listening and recorded what was
+    // heard. Applying `reply_done` on top would be a second, illegal transition.
+    if (generation !== this.#replyGeneration) return;
+
+    if (this.#replyText !== '') {
+      this.#history.push({ role: 'assistant', content: this.#replyText });
+    }
     this.#apply({ type: 'reply_done' });
   }
 
-  async #speakAll(speech: AsyncQueue<string>): Promise<void> {
+  async #speakAll(speech: AsyncQueue<string>, generation: number): Promise<void> {
     for await (const text of speech) {
+      if (this.#stopped || generation !== this.#replyGeneration) return;
+
+      // Where this chunk sits in the reply. The chunker trims its seams, so the
+      // offset is found rather than accumulated — accumulating would drift by
+      // exactly the whitespace it removed, and drift is what makes a resume land
+      // in the wrong place.
+      const base = Math.max(0, this.#replyText.indexOf(text, this.#spokenChars));
+
       for await (const chunk of this.#options.pipeline.tts.synthesizeStream(text)) {
-        if (this.#stopped) return;
+        // Checked here, inside the chunk loop, so emission stops on the *next
+        // chunk* rather than at the end of the current sentence. Criterion 1.
+        if (this.#stopped || generation !== this.#replyGeneration) return;
+
         if (this.#turn.state !== 'speaking') {
           this.#apply({ type: 'audio' });
           this.#emit({ type: 'earcon', sound: 'ready' });
         }
+        this.#spokenChars = base + (chunk.span?.end ?? text.length);
         this.#emit({ type: 'audio', chunk });
       }
     }
