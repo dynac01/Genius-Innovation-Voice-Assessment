@@ -446,21 +446,29 @@ that proves nothing in the app is host-specific.
 One container serving the built app **and** the WebSocket from a single origin. That is not tidiness: a second origin makes the socket cross-origin and puts the demo one CORS or cookie policy away from failing on exactly the mobile browsers it most needs to work on. It also means one certificate and one URL.
 
 ```bash
-fly launch --no-deploy          # accept the rename — the app name must be globally unique
-fly secrets set DEEPGRAM_API_KEY=... ANTHROPIC_API_KEY=...
-fly deploy
+pnpm deploy
 ```
 
-Secrets go in **before** the first deploy, not after. `fly.toml` asks for real
-providers, and asking for a provider whose key is missing makes the server refuse to
-boot rather than quietly serve fakes to real users — so deploying without them fails
-on purpose, with the reason in `fly logs`.
+That is [`scripts/deploy.sh`](scripts/deploy.sh), and the deploy is the small part of
+it. Either side sit checks that fail with the *cause*:
 
-Then check three things, in this order, because each one only means something if the
-previous passed:
+- **Preflight** — signed in, app exists, both provider keys present, region named.
+  Each of those has a failure mode that otherwise surfaces somewhere unhelpful.
+  Deploying without secrets does not warn; the server refuses to boot, deliberately,
+  and you learn about it from a health check that never goes green.
+- **Verification** — the health endpoint answers, all three providers resolved to
+  **real** rather than silently falling back, the browser app is served, and the
+  WebSocket upgrades over `wss`. A green deploy only means the container started.
+
+Two things it deliberately does not automate, because they cannot honestly be
+scripted: `fly auth login` opens a browser, and adding a payment method is a web
+form. It names them when they are missing instead:
 
 ```bash
-curl https://<app>.fly.dev/health     # pipeline: all three "real"
+fly auth login
+fly launch --no-deploy          # accept the rename — app names are globally unique
+fly secrets set DEEPGRAM_API_KEY=... ANTHROPIC_API_KEY=...
+pnpm deploy
 ```
 
 Open the URL on a **phone**, not just a laptop — the criterion says mobile, and iOS

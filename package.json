@@ -26,7 +26,8 @@
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install --with-deps chromium",
     "bench:latency": "playwright test --config playwright.latency.config.ts",
-    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
+    "deploy": "bash scripts/deploy.sh"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
