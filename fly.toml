@@ -1,59 +1,38 @@
-# Fly.io deployment.
+# fly.toml app configuration file generated for genius-innovation-voice-assessment on 2026-08-04T23:38:43Z
 #
-# Chosen for persistent WebSockets and HTTPS by default. Nothing in the app is
-# host-specific — it is one container listening on one port — so moving to another
-# host is a config change, not a code change.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-# Globally unique across Fly. `fly launch` picks this when the name you asked for is
-# taken, and rewrites it in whichever copy of this file it ran against — so if you
-# launched from a Codespace, this one can end up naming an app that does not exist.
-# `pnpm deploy` reads the name from here, which is why it matters.
-app = "genius-innovation-voice-assessment"
-
-# Pick the region nearest whoever is watching the demo. Every turn crosses the
-# Atlantic twice — browser to here, here to Deepgram and Anthropic — so a badly
-# chosen region shows up directly in the barge-in and response numbers.
-primary_region = "lhr"
+app = 'genius-innovation-voice-assessment'
+primary_region = 'ewr'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
-# Which providers a session STARTS on. Not secrets — deliberately in the tracked
-# config, so what a deployment is configured to do is reviewable rather than
-# hidden in a dashboard. The keys themselves go in `fly secrets`.
-#
-# Note the coupling: asking here for a provider whose key is missing makes the
-# server refuse to boot rather than quietly serve fakes to real users. So set the
-# secrets *before* the first deploy, or the first deploy fails on purpose.
 [env]
-  STT_PROVIDER = "deepgram"
-  LLM_PROVIDER = "anthropic"
-  TTS_PROVIDER = "deepgram"
+  LLM_PROVIDER = 'anthropic'
+  STT_PROVIDER = 'deepgram'
+  TTS_PROVIDER = 'deepgram'
 
 [http_service]
   internal_port = 8787
-  # The brief requires HTTPS: getUserMedia refuses to run outside a secure
-  # context, so plain HTTP would not merely be untidy — the demo would not work.
   force_https = true
-
-  # A voice session is a live WebSocket. Stopping the machine under an open
-  # connection would drop it mid-sentence, so instances stay up.
-  auto_stop_machines = false
+  auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
 
   [http_service.concurrency]
-    type = "connections"
-    soft_limit = 20
+    type = 'connections'
     hard_limit = 25
+    soft_limit = 20
 
   [[http_service.checks]]
-    interval = "30s"
-    timeout = "5s"
-    grace_period = "10s"
-    method = "GET"
-    path = "/health"
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/health'
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = 'shared-cpu-1x'
+  memory = '512mb'
