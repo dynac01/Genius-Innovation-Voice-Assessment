@@ -4,9 +4,11 @@
 # host-specific — it is one container listening on one port — so moving to another
 # host is a config change, not a code change.
 
-# Must be globally unique across Fly, so this one is almost certainly taken.
-# `fly launch` will offer to rename it; accept, or set your own here first.
-app = "voice-conversation"
+# Globally unique across Fly. `fly launch` picks this when the name you asked for is
+# taken, and rewrites it in whichever copy of this file it ran against — so if you
+# launched from a Codespace, this one can end up naming an app that does not exist.
+# `pnpm deploy` reads the name from here, which is why it matters.
+app = "genius-innovation-voice-assessment"
 
 # Pick the region nearest whoever is watching the demo. Every turn crosses the
 # Atlantic twice — browser to here, here to Deepgram and Anthropic — so a badly
